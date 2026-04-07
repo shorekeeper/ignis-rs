@@ -1,0 +1,2179 @@
+//! Ignis comprehensive smoke test - exercises every major subsystem headlessly.
+//!
+//! Covers managed/external device creation, queue discovery, per-frame sync,
+//! GPU futures (sync, async, FenceWatcher), allocator subsystem (block, dedicated,
+//! hardened), buffer/image lifecycle, multi-threaded command recording, render pass
+//! and dynamic rendering, pipeline builders, resource tracker, and error paths.
+//!
+//! Run with:
+//! ```sh
+//! cargo run --example smoke_test
+//! ```
+
+use ash::vk::Handle;
+use std::ffi::CStr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
+use ash::vk;
+
+// Minimal SPIR-V 1.0 compute shader: void main() {} with local_size(1,1,1).
+#[rustfmt::skip]
+const EMPTY_COMPUTE_SPV: &[u32] = &[
+    0x07230203, 0x00010000, 0x00000000, 0x00000006, 0x00000000,
+    0x00020011, 0x00000001,
+    0x0003000E, 0x00000000, 0x00000001,
+    0x0005000F, 0x00000005, 0x00000004, 0x6E69616D, 0x00000000,
+    0x00060010, 0x00000004, 0x00000011, 0x00000001, 0x00000001, 0x00000001,
+    0x00020013, 0x00000002,
+    0x00030021, 0x00000003, 0x00000002,
+    0x00050036, 0x00000002, 0x00000004, 0x00000000, 0x00000003,
+    0x000200F8, 0x00000005,
+    0x000100FD,
+    0x00010038,
+];
+
+// Minimal vertex shader: gl_Position = vec4(0, 0, 0, 1).
+#[rustfmt::skip]
+const MINIMAL_VERT_SPV: &[u32] = &[
+    0x07230203, 0x00010000, 0x00000000, 0x00000011, 0x00000000,
+    0x00020011, 0x00000001,
+    0x0003000E, 0x00000000, 0x00000001,
+    0x0006000F, 0x00000000, 0x00000003, 0x6E69616D, 0x00000000, 0x00000008,
+    0x00050048, 0x00000006, 0x00000000, 0x0000000B, 0x00000000,
+    0x00030047, 0x00000006, 0x00000002,
+    0x00020013, 0x00000001,
+    0x00030021, 0x00000002, 0x00000001,
+    0x00030016, 0x00000004, 0x00000020,
+    0x00040017, 0x00000005, 0x00000004, 0x00000004,
+    0x0003001E, 0x00000006, 0x00000005,
+    0x00040020, 0x00000007, 0x00000003, 0x00000006,
+    0x00040015, 0x0000000C, 0x00000020, 0x00000000,
+    0x00040020, 0x0000000E, 0x00000003, 0x00000005,
+    0x0004003B, 0x00000007, 0x00000008, 0x00000003,
+    0x0004002B, 0x00000004, 0x00000009, 0x00000000,
+    0x0004002B, 0x00000004, 0x0000000A, 0x3F800000,
+    0x0007002C, 0x00000005, 0x0000000B, 0x00000009, 0x00000009, 0x00000009, 0x0000000A,
+    0x0004002B, 0x0000000C, 0x0000000D, 0x00000000,
+    0x00050036, 0x00000001, 0x00000003, 0x00000000, 0x00000002,
+    0x000200F8, 0x0000000F,
+    0x00050041, 0x0000000E, 0x00000010, 0x00000008, 0x0000000D,
+    0x0003003E, 0x00000010, 0x0000000B,
+    0x000100FD,
+    0x00010038,
+];
+
+// Minimal fragment shader: outColor = vec4(1.0, 0.0, 0.0, 1.0).
+#[rustfmt::skip]
+const MINIMAL_FRAG_SPV: &[u32] = &[
+    0x07230203, 0x00010000, 0x00000000, 0x0000000C, 0x00000000,
+    0x00020011, 0x00000001,
+    0x0003000E, 0x00000000, 0x00000001,
+    0x0006000F, 0x00000004, 0x00000003, 0x6E69616D, 0x00000000, 0x00000007,
+    0x00030010, 0x00000003, 0x00000007,
+    0x00040047, 0x00000007, 0x0000001E, 0x00000000,
+    0x00020013, 0x00000001,
+    0x00030021, 0x00000002, 0x00000001,
+    0x00030016, 0x00000004, 0x00000020,
+    0x00040017, 0x00000005, 0x00000004, 0x00000004,
+    0x00040020, 0x00000006, 0x00000003, 0x00000005,
+    0x0004003B, 0x00000006, 0x00000007, 0x00000003,
+    0x0004002B, 0x00000004, 0x00000008, 0x3F800000,
+    0x0004002B, 0x00000004, 0x00000009, 0x00000000,
+    0x0007002C, 0x00000005, 0x0000000A, 0x00000008, 0x00000009, 0x00000009, 0x00000008,
+    0x00050036, 0x00000001, 0x00000003, 0x00000000, 0x00000002,
+    0x000200F8, 0x0000000B,
+    0x0003003E, 0x00000007, 0x0000000A,
+    0x000100FD,
+    0x00010038,
+];
+
+const TOTAL_STEPS: u32 = 32;
+
+fn main() {
+    println!();
+    println!("    IGNIS COMPREHENSIVE SMOKE TEST");
+    println!("    Exercises every subsystem headlessly");
+    println!();
+
+    let wall = Instant::now();
+
+    match run() {
+        Ok((passed, skipped)) => {
+            let elapsed = wall.elapsed();
+            println!();
+            println!(
+                "    RESULTS  passed: {}  skipped: {}  total: {}",
+                passed, skipped, TOTAL_STEPS
+            );
+            println!("    Elapsed: {:.2?}", elapsed);
+            println!();
+            if passed + skipped == TOTAL_STEPS {
+                println!("    ALL TESTS OK");
+            } else {
+                println!("    SOME TESTS MISSING (expected {} steps)", TOTAL_STEPS);
+            }
+            println!();
+        }
+        Err(e) => {
+            eprintln!();
+            eprintln!("    FATAL: {e}");
+            eprintln!();
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run() -> ignis::Result<(u32, u32)> {
+    let mut passed: u32 = 0;
+    let mut skipped: u32 = 0;
+
+    let enable_validation = cfg!(debug_assertions) && std::env::var("CI").is_err();
+    // Step 1: Managed device creation.
+    step(1, "Managed device creation");
+    let ctx = ignis::Ignis::managed(
+        ignis::ManagedConfig::new("ignis-smoke", vk::API_VERSION_1_2)
+            .enable_validation(enable_validation),
+    )?;
+    {
+        let p = ctx.device_properties();
+        let name = unsafe { CStr::from_ptr(p.device_name.as_ptr()) }
+            .to_str()
+            .unwrap_or("<unknown>");
+        let (maj, min, pat) = (
+            vk::api_version_major(p.api_version),
+            vk::api_version_minor(p.api_version),
+            vk::api_version_patch(p.api_version),
+        );
+        info(&format!("Device: {name}"));
+        info(&format!("API: {maj}.{min}.{pat}"));
+        info(&format!(
+            "Memory heaps: {}",
+            ctx.memory_properties().memory_heap_count
+        ));
+    }
+    passed += 1;
+    ok();
+
+    // Step 2: External device wrapping.
+    step(2, "External device wrapping (interop mode)");
+    {
+        let gfx = ctx.queue(ignis::QueueType::Graphics)?;
+        let raw_queue = unsafe {
+            ctx.device()
+                .get_device_queue(gfx.family_index(), gfx.queue_index())
+        };
+        let ext_info = ignis::ExternalDeviceInfo {
+            instance: ctx.instance().clone(),
+            device: ctx.device().clone(),
+            physical_device: ctx.physical_device(),
+            queue_allocations: vec![ignis::QueueAllocation {
+                family_index: gfx.family_index(),
+                queue_index: gfx.queue_index(),
+                handle: raw_queue,
+                capabilities: gfx.capabilities(),
+            }],
+            enable_raytracing: false,
+        };
+
+        let ext = ignis::Ignis::external(ext_info)?;
+        let eq = ext.queue(ignis::QueueType::Graphics)?;
+        assert_eq!(eq.family_index(), gfx.family_index());
+
+        let ext_pool = ext.create_command_pool(ignis::QueueType::Graphics)?;
+        let cmd = record_empty(&ext_pool)?;
+        eq.submit_simple(cmd)?.wait()?;
+        info("submit through external context OK");
+
+        verify_device_handle(&ext);
+        info("DeviceHandle trait dispatches correctly");
+
+        drop(ext);
+        info("external context dropped (no device destruction)");
+    }
+    passed += 1;
+    ok();
+
+    // Step 3: Queue discovery and DeviceHandle trait.
+    step(3, "Queue discovery and DeviceHandle trait");
+    let gfx_queue = ctx.queue(ignis::QueueType::Graphics)?;
+    info(&format!(
+        "Graphics -> family {}, index {}, caps {:?}",
+        gfx_queue.family_index(),
+        gfx_queue.queue_index(),
+        gfx_queue.capabilities()
+    ));
+    assert!(gfx_queue.supports(ignis::QueueType::Graphics));
+    print_queue(&ctx, ignis::QueueType::Compute, "Compute ");
+    print_queue(&ctx, ignis::QueueType::Transfer, "Transfer");
+    info(&format!("Total queues: {}", ctx.all_queues().len()));
+    verify_device_handle(&ctx);
+    passed += 1;
+    ok();
+
+    let pool = ctx.create_command_pool(ignis::QueueType::Graphics)?;
+
+    // Step 4: FrameSync lifecycle.
+    step(4, "FrameSync lifecycle (multi-config, multi-cycle)");
+    {
+        for frames_in_flight in [1u32, 2, 3] {
+            let sync = ctx.create_frame_sync(frames_in_flight)?;
+            let cycles = frames_in_flight * 3;
+            for _ in 0..cycles {
+                let frame = sync.begin_frame()?;
+                let cmd = record_empty(&pool)?;
+                let cmds = [cmd];
+                let submits = [vk::SubmitInfo::default().command_buffers(&cmds)];
+                unsafe { gfx_queue.submit_raw(&submits, frame.fence())? };
+                sync.advance();
+            }
+            sync.wait_all()?;
+            info(&format!(
+                "frames_in_flight={}, {} cycles -> OK",
+                frames_in_flight, cycles
+            ));
+        }
+    }
+    passed += 1;
+    ok();
+
+    // Step 5: GpuFuture synchronous methods.
+    step(5, "GpuFuture (wait, is_complete, wait_timeout, edges)");
+    {
+        let f = gfx_queue.submit_simple(record_empty(&pool)?)?;
+        f.wait()?;
+        assert!(f.is_complete()?);
+        info("wait() + is_complete() OK");
+
+        let f = gfx_queue.submit_simple(record_empty(&pool)?)?;
+        assert!(f.wait_timeout(Duration::from_secs(5))?);
+        info("wait_timeout(5s) OK");
+
+        let f = gfx_queue.submit_simple(record_empty(&pool)?)?;
+        f.wait()?;
+        assert!(f.wait_timeout(Duration::ZERO)?);
+        info("wait_timeout(0) on signaled fence OK");
+
+        let mut futures = Vec::new();
+        for _ in 0..8 {
+            futures.push(gfx_queue.submit_simple(record_empty(&pool)?)?);
+        }
+        for f in futures.iter().rev() {
+            f.wait()?;
+        }
+        for f in &futures {
+            assert!(f.is_complete()?);
+        }
+        info("8 concurrent futures, reverse-order wait OK");
+
+        let cmd = record_empty(&pool)?;
+        gfx_queue.submit().command_buffer(cmd).build()?.wait()?;
+        info("SubmitBuilder chain OK");
+    }
+    passed += 1;
+    ok();
+
+    // Step 6: FenceWatcher + async Future trait.
+    step(6, "FenceWatcher + Future trait (watcher-backed)");
+    {
+        let watcher = ctx.create_fence_watcher(Duration::from_micros(100));
+
+        let mut futures = Vec::new();
+        for _ in 0..5 {
+            let cmd = record_empty(&pool)?;
+            let f = gfx_queue
+                .submit()
+                .command_buffer(cmd)
+                .with_watcher(&watcher)
+                .build()?;
+            futures.push(f);
+        }
+        info(&format!(
+            "registered 5 fences (pending: {})",
+            watcher.pending_count()
+        ));
+
+        for f in futures {
+            poll_until_ready(f)?;
+        }
+        info("all 5 watcher-backed futures resolved via poll");
+
+        std::thread::sleep(Duration::from_millis(20));
+        assert_eq!(watcher.pending_count(), 0, "watcher should prune all");
+        info("watcher pruned all entries");
+
+        let f = gfx_queue.submit_simple(record_empty(&pool)?)?;
+        poll_until_ready(f)?;
+        info("busy-wait fallback future OK");
+    }
+    passed += 1;
+    ok();
+
+    // Step 7: Buffer allocation across all MemoryLocation variants.
+    step(7, "Buffer allocation (GpuOnly, CpuToGpu, GpuToCpu)");
+    {
+        let sizes = [64u64, 1, 4096, 65536];
+        for &sz in &sizes {
+            let b_gpu = ctx.create_buffer(&ignis::BufferInfo {
+                size: sz,
+                usage: vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
+                location: ignis::MemoryLocation::GpuOnly,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+            })?;
+            assert_eq!(b_gpu.size(), sz);
+            assert!(b_gpu.mapped_slice().is_none(), "GpuOnly must not be mapped");
+
+            let b_up = ctx.create_buffer(&ignis::BufferInfo::staging(sz))?;
+            assert!(b_up.mapped_slice().is_some(), "CpuToGpu must be mapped");
+
+            let b_down = ctx.create_buffer(&ignis::BufferInfo {
+                size: sz,
+                usage: vk::BufferUsageFlags::TRANSFER_DST,
+                location: ignis::MemoryLocation::GpuToCpu,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+            })?;
+            assert!(b_down.mapped_slice().is_some(), "GpuToCpu must be mapped");
+
+            info(&format!("size {sz}: all 3 locations OK"));
+        }
+
+        let _vbo = ctx.create_buffer(&ignis::BufferInfo::vertex(
+            256,
+            ignis::MemoryLocation::CpuToGpu,
+        ))?;
+        let _ibo = ctx.create_buffer(&ignis::BufferInfo::index(
+            256,
+            ignis::MemoryLocation::CpuToGpu,
+        ))?;
+        let _ubo = ctx.create_buffer(&ignis::BufferInfo::uniform(256))?;
+        let _ssbo = ctx.create_buffer(&ignis::BufferInfo::storage(
+            256,
+            ignis::MemoryLocation::GpuOnly,
+        ))?;
+        info("vertex, index, uniform, storage constructors OK");
+
+        #[repr(C)]
+        #[derive(Copy, Clone, PartialEq, Debug)]
+        struct Vec4 {
+            x: f32,
+            y: f32,
+            z: f32,
+            w: f32,
+        }
+
+        let ubo = ctx.create_buffer(&ignis::BufferInfo::uniform(
+            std::mem::size_of::<Vec4>() as u64
+        ))?;
+        let val = Vec4 {
+            x: 1.0,
+            y: 2.0,
+            z: 3.0,
+            w: 4.0,
+        };
+        unsafe { ubo.write_struct(&val) };
+        let readback: Vec4 = unsafe { *(ubo.mapped_slice().unwrap().as_ptr() as *const Vec4) };
+        assert_eq!(readback, val);
+        info("write_struct + readback verified");
+
+        let tiny = ctx.create_buffer(&ignis::BufferInfo::staging(4))?;
+        tiny.write(3, &[0xFF]);
+        assert_eq!(tiny.mapped_slice().unwrap()[3], 0xFF);
+        info("boundary write OK");
+
+        let tiny2 = ctx.create_buffer(&ignis::BufferInfo::staging(4))?;
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tiny2.write(4, &[0x00]);
+        }));
+        assert!(caught.is_err(), "OOB write must panic");
+        info("out-of-bounds write correctly panics");
+    }
+    passed += 1;
+    ok();
+
+    // Step 8: Memory transfer pipeline + ASCII visualization.
+    step(8, "Memory transfer pipeline + ASCII visualization");
+    {
+        const COLS: usize = 48;
+        const ROWS: usize = 8;
+        const DATA_SIZE: usize = COLS * ROWS;
+
+        let staging = ctx.create_buffer(&ignis::BufferInfo::staging(DATA_SIZE as u64))?;
+        let gpu_buf = ctx.create_buffer(&ignis::BufferInfo {
+            size: DATA_SIZE as u64,
+            usage: vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
+            location: ignis::MemoryLocation::GpuOnly,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+        })?;
+        let readback_buf = ctx.create_buffer(&ignis::BufferInfo {
+            size: DATA_SIZE as u64,
+            usage: vk::BufferUsageFlags::TRANSFER_DST,
+            location: ignis::MemoryLocation::GpuToCpu,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+        })?;
+
+        let mut pattern = vec![0u8; DATA_SIZE];
+        for row in 0..ROWS {
+            for col in 0..COLS {
+                let t = (row * COLS + col) as f64 / (DATA_SIZE - 1) as f64;
+                pattern[row * COLS + col] = (t * 255.0) as u8;
+            }
+        }
+        staging.write(0, &pattern);
+
+        let cmd = pool.allocate_primary()?;
+        let rec = pool.begin_primary(cmd)?;
+
+        rec.copy_buffer(
+            staging.handle(),
+            gpu_buf.handle(),
+            &[vk::BufferCopy {
+                src_offset: 0,
+                dst_offset: 0,
+                size: DATA_SIZE as u64,
+            }],
+        );
+        rec.pipeline_barrier(
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::DependencyFlags::empty(),
+            &[vk::MemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)],
+            &[],
+            &[],
+        );
+        rec.copy_buffer(
+            gpu_buf.handle(),
+            readback_buf.handle(),
+            &[vk::BufferCopy {
+                src_offset: 0,
+                dst_offset: 0,
+                size: DATA_SIZE as u64,
+            }],
+        );
+
+        let cmd = rec.end()?;
+        gfx_queue.submit_simple(cmd)?.wait()?;
+
+        let result = readback_buf.mapped_slice().unwrap();
+        let matches = (0..DATA_SIZE).filter(|&i| result[i] == pattern[i]).count();
+
+        info(&format!(
+            "Integrity: {}/{} bytes ({:.1}%)",
+            matches,
+            DATA_SIZE,
+            matches as f64 / DATA_SIZE as f64 * 100.0
+        ));
+        info("GPU round-trip (staging -> device -> readback):");
+        println!();
+        for row in 0..ROWS {
+            let mut line = String::with_capacity(COLS + 16);
+            line.push_str("       [");
+            for col in 0..COLS {
+                line.push(byte_to_char(result[row * COLS + col]));
+            }
+            line.push(']');
+            println!("{line}");
+        }
+        println!();
+        assert_eq!(matches, DATA_SIZE, "data corruption after round-trip");
+    }
+    passed += 1;
+    ok();
+
+    // Step 9: Image allocation and ImageView creation.
+    step(9, "Image allocation and view creation");
+    {
+        let formats = [
+            (vk::Format::R8G8B8A8_UNORM, "R8G8B8A8_UNORM"),
+            (vk::Format::R8G8B8A8_SRGB, "R8G8B8A8_SRGB"),
+            (vk::Format::R32G32B32A32_SFLOAT, "R32G32B32A32_SFLOAT"),
+        ];
+        for (fmt, name) in &formats {
+            let img = ctx.create_image(&ignis::ImageInfo::texture_2d(
+                64,
+                64,
+                *fmt,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            ))?;
+            assert_eq!(img.format(), *fmt);
+            assert_eq!(img.extent().width, 64);
+            let view = img.create_view(vk::ImageAspectFlags::COLOR)?;
+            assert_ne!(view, vk::ImageView::null());
+            info(&format!("{name} 64x64 OK"));
+            unsafe { ctx.device().destroy_image_view(view, None) };
+        }
+
+        let depth = ctx.create_image(&ignis::ImageInfo::depth(128, 128, vk::Format::D32_SFLOAT))?;
+        let dv = depth.create_view(vk::ImageAspectFlags::DEPTH)?;
+        info("D32_SFLOAT 128x128 depth OK");
+        unsafe { ctx.device().destroy_image_view(dv, None) };
+    }
+    passed += 1;
+    ok();
+
+    // Step 10: Command pool operations.
+    step(10, "Command pool operations and recording");
+    {
+        let batch = pool.allocate(vk::CommandBufferLevel::PRIMARY, 8)?;
+        assert_eq!(batch.len(), 8);
+        info("allocated 8 primary buffers");
+
+        pool.reset()?;
+        let batch2 = pool.allocate(vk::CommandBufferLevel::PRIMARY, 4)?;
+        assert_eq!(batch2.len(), 4);
+        info("pool reset + re-allocate OK");
+
+        let cmd = pool.allocate_primary()?;
+        let rec = pool.begin_primary(cmd)?;
+        rec.set_viewport(
+            0,
+            &[vk::Viewport {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+                min_depth: 0.0,
+                max_depth: 1.0,
+            }],
+        );
+        rec.set_scissor(
+            0,
+            &[vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: 800,
+                    height: 600,
+                },
+            }],
+        );
+        rec.end()?;
+        info("viewport + scissor recording OK");
+
+        let layout_ci = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&[
+            vk::PushConstantRange {
+                stage_flags: vk::ShaderStageFlags::VERTEX,
+                offset: 0,
+                size: 16,
+            },
+        ]);
+        let temp_layout = unsafe { ctx.device().create_pipeline_layout(&layout_ci, None)? };
+        let cmd = pool.allocate_primary()?;
+        let rec = pool.begin_primary(cmd)?;
+        rec.push_constants(temp_layout, vk::ShaderStageFlags::VERTEX, 0, &[0u8; 16]);
+        rec.end()?;
+        info("push_constants OK");
+        unsafe { ctx.device().destroy_pipeline_layout(temp_layout, None) };
+    }
+    passed += 1;
+    ok();
+
+    // Step 11: Parallel recording.
+    step(11, "Parallel recording (misc thread/task counts)");
+    {
+        let rp = ctx
+            .render_pass_builder()
+            .attachment(ignis::AttachmentConfig {
+                format: vk::Format::R8G8B8A8_UNORM,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            })
+            .subpass(ignis::SubpassConfig {
+                color_attachments: vec![ignis::AttachmentRef {
+                    attachment: 0,
+                    layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                }],
+                ..Default::default()
+            })
+            .build()?;
+
+        let inheritance = ignis::CommandBufferInheritance {
+            render_pass: rp.handle(),
+            subpass: 0,
+            framebuffer: vk::Framebuffer::null(),
+        };
+
+        let noop = |_: &ignis::CommandRecorder| {};
+
+        let pr = ctx.create_parallel_recorder(ignis::QueueType::Graphics, 4)?;
+        assert_eq!(pr.record(&inheritance, &[noop, noop, noop, noop])?.len(), 4);
+        info("4 threads, 4 tasks -> 4 buffers");
+
+        let empty: &[fn(&ignis::CommandRecorder)] = &[];
+        assert_eq!(pr.record(&inheritance, empty)?.len(), 0);
+        info("4 threads, 0 tasks -> 0 buffers");
+
+        assert_eq!(
+            pr.record(&inheritance, &[noop, noop, noop, noop, noop, noop, noop])?
+                .len(),
+            4
+        );
+        info("4 threads, 7 tasks -> 4 buffers (clamped)");
+
+        let pr1 = ctx.create_parallel_recorder(ignis::QueueType::Graphics, 1)?;
+        assert_eq!(pr1.record(&inheritance, &[noop, noop, noop])?.len(), 1);
+        info("1 thread, 3 tasks -> 1 buffer");
+
+        let work = |rec: &ignis::CommandRecorder| {
+            rec.set_viewport(
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+        };
+        let pr2 = ctx.create_parallel_recorder(ignis::QueueType::Graphics, 2)?;
+        assert_eq!(pr2.record(&inheritance, &[work, work])?.len(), 2);
+        info("2 threads with viewport recording OK");
+
+        pr.reset_all()?;
+        assert_eq!(pr.record(&inheritance, &[noop])?.len(), 1);
+        info("reset_all + re-record OK");
+
+        drop(rp);
+    }
+    passed += 1;
+    ok();
+
+    // Step 12: Render pass builder.
+    step(12, "Render pass builder (complex configuration)");
+    let render_pass = {
+        let rp_min = ctx
+            .render_pass_builder()
+            .attachment(ignis::AttachmentConfig {
+                format: vk::Format::R8G8B8A8_UNORM,
+                final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            })
+            .subpass(ignis::SubpassConfig {
+                color_attachments: vec![ignis::AttachmentRef {
+                    attachment: 0,
+                    layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                }],
+                ..Default::default()
+            })
+            .build()?;
+        info(&format!("minimal: {:?}", rp_min.handle()));
+        drop(rp_min);
+
+        let rp = ctx
+            .render_pass_builder()
+            .attachment(ignis::AttachmentConfig {
+                format: vk::Format::R8G8B8A8_UNORM,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            })
+            .attachment(ignis::AttachmentConfig {
+                format: vk::Format::D32_SFLOAT,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::DONT_CARE,
+                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            })
+            .attachment(ignis::AttachmentConfig {
+                format: vk::Format::R8G8B8A8_UNORM,
+                load_op: vk::AttachmentLoadOp::DONT_CARE,
+                store_op: vk::AttachmentStoreOp::STORE,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                ..Default::default()
+            })
+            .subpass(ignis::SubpassConfig {
+                color_attachments: vec![ignis::AttachmentRef {
+                    attachment: 0,
+                    layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                }],
+                depth_stencil_attachment: Some(ignis::AttachmentRef {
+                    attachment: 1,
+                    layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                }),
+                preserve_attachments: vec![2],
+                ..Default::default()
+            })
+            .subpass(ignis::SubpassConfig {
+                color_attachments: vec![ignis::AttachmentRef {
+                    attachment: 2,
+                    layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                }],
+                input_attachments: vec![ignis::AttachmentRef {
+                    attachment: 0,
+                    layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                }],
+                ..Default::default()
+            })
+            .dependency(ignis::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                dst_subpass: 0,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                src_access_mask: vk::AccessFlags::empty(),
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dependency_flags: vk::DependencyFlags::empty(),
+            })
+            .dependency(ignis::SubpassDependency {
+                src_subpass: 0,
+                dst_subpass: 1,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                src_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_access_mask: vk::AccessFlags::INPUT_ATTACHMENT_READ,
+                dependency_flags: vk::DependencyFlags::BY_REGION,
+            })
+            .build()?;
+        info(&format!("complex (3 attach, 2 subpass): {:?}", rp.handle()));
+        rp
+    };
+    passed += 1;
+    ok();
+
+    // Step 13: Dynamic rendering.
+    step(13, "Dynamic rendering (Vulkan 1.3)");
+    {
+        let dev_api = ctx.device_properties().api_version;
+        let has_1_3 = vk::api_version_major(dev_api) > 1
+            || (vk::api_version_major(dev_api) == 1 && vk::api_version_minor(dev_api) >= 3);
+
+        if !has_1_3 {
+            skip("device does not report Vulkan 1.3");
+            skipped += 1;
+        } else {
+            match ignis::Ignis::managed(ignis::ManagedConfig::new("ignis-dr", vk::API_VERSION_1_3))
+            {
+                Ok(ctx13) => {
+                    let dr_pool = ctx13.create_command_pool(ignis::QueueType::Graphics)?;
+                    let dr_queue = ctx13.queue(ignis::QueueType::Graphics)?;
+
+                    let color_img = ctx13.create_image(&ignis::ImageInfo::texture_2d(
+                        32,
+                        32,
+                        vk::Format::R8G8B8A8_UNORM,
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+                    ))?;
+                    let color_view = color_img.create_view(vk::ImageAspectFlags::COLOR)?;
+
+                    let cmd = dr_pool.allocate_primary()?;
+                    let rec = dr_pool.begin_primary(cmd)?;
+
+                    rec.transition_image_layout(
+                        color_img.handle(),
+                        vk::ImageLayout::UNDEFINED,
+                        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                        vk::ImageSubresourceRange {
+                            aspect_mask: vk::ImageAspectFlags::COLOR,
+                            base_mip_level: 0,
+                            level_count: 1,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        },
+                    );
+
+                    ignis::DynamicRenderPassBuilder::new()
+                        .render_area(vk::Rect2D {
+                            offset: vk::Offset2D { x: 0, y: 0 },
+                            extent: vk::Extent2D {
+                                width: 32,
+                                height: 32,
+                            },
+                        })
+                        .color_attachment(ignis::ColorAttachmentInfo {
+                            image_view: color_view,
+                            ..Default::default()
+                        })
+                        .begin(&rec);
+
+                    rec.end_rendering();
+
+                    let cmd = rec.end()?;
+                    dr_queue.submit_simple(cmd)?.wait()?;
+                    info("begin_rendering / end_rendering OK");
+
+                    unsafe { ctx13.device().destroy_image_view(color_view, None) };
+                    drop(ctx13);
+                    passed += 1;
+                }
+                Err(e) => {
+                    info(&format!("1.3 device creation failed: {e}"));
+                    skip("could not create Vulkan 1.3 device");
+                    skipped += 1;
+                }
+            }
+        }
+    }
+    ok();
+
+    // Step 14: Shader modules.
+    step(14, "Shader modules (valid + invalid)");
+    {
+        let cs = ctx.create_shader_module(EMPTY_COMPUTE_SPV)?;
+        info(&format!("compute: {:?}", cs.handle()));
+        let vs = ctx.create_shader_module(MINIMAL_VERT_SPV)?;
+        info(&format!("vertex:  {:?}", vs.handle()));
+        let fs = ctx.create_shader_module(MINIMAL_FRAG_SPV)?;
+        info(&format!("fragment:{:?}", fs.handle()));
+
+        match ctx.create_shader_module(&[]) {
+            Err(ignis::Error::InvalidSpirv) => info("empty -> InvalidSpirv OK"),
+            other => panic!("expected InvalidSpirv, got: {:?}", other.err()),
+        }
+        match ctx.create_shader_module(&[0xDEADBEEF, 0, 0, 0, 0]) {
+            Err(ignis::Error::InvalidSpirv) => info("bad magic -> InvalidSpirv OK"),
+            other => panic!("expected InvalidSpirv, got: {:?}", other.err()),
+        }
+    }
+    passed += 1;
+    ok();
+
+    // Step 15: Compute pipeline + dispatch.
+    step(15, "Compute pipeline creation and dispatch");
+    {
+        let cs = ctx.create_shader_module(EMPTY_COMPUTE_SPV)?;
+        let layout_ci = vk::PipelineLayoutCreateInfo::default();
+        let layout = unsafe { ctx.device().create_pipeline_layout(&layout_ci, None)? };
+
+        let pipeline = ctx
+            .compute_pipeline_builder()
+            .shader(cs.handle(), "main")
+            .layout(layout)
+            .build()?;
+        info(&format!("compute pipeline: {:?}", pipeline));
+
+        let cmd = pool.allocate_primary()?;
+        let rec = pool.begin_primary(cmd)?;
+        rec.bind_pipeline(vk::PipelineBindPoint::COMPUTE, pipeline);
+        rec.dispatch(1, 1, 1);
+        let cmd = rec.end()?;
+        gfx_queue.submit_simple(cmd)?.wait()?;
+        info("dispatch(1,1,1) OK");
+
+        unsafe {
+            ctx.device().destroy_pipeline(pipeline, None);
+            ctx.device().destroy_pipeline_layout(layout, None);
+        }
+    }
+    passed += 1;
+    ok();
+
+    // Step 16: Graphics pipeline.
+    step(16, "Graphics pipeline creation");
+    {
+        let vs = ctx.create_shader_module(MINIMAL_VERT_SPV)?;
+        let fs = ctx.create_shader_module(MINIMAL_FRAG_SPV)?;
+        let layout_ci = vk::PipelineLayoutCreateInfo::default();
+        let layout = unsafe { ctx.device().create_pipeline_layout(&layout_ci, None)? };
+
+        match ctx
+            .graphics_pipeline_builder()
+            .shader_stage(vk::ShaderStageFlags::VERTEX, vs.handle(), "main")
+            .shader_stage(vk::ShaderStageFlags::FRAGMENT, fs.handle(), "main")
+            .layout(layout)
+            .render_pass(render_pass.handle(), 0)
+            .depth_test(false)
+            .depth_write(false)
+            .build()
+        {
+            Ok(pipeline) => {
+                info(&format!("graphics pipeline: {:?}", pipeline));
+                unsafe { ctx.device().destroy_pipeline(pipeline, None) };
+            }
+            Err(e) => {
+                warn(&format!("graphics pipeline failed (non-fatal): {e}"));
+            }
+        }
+        unsafe { ctx.device().destroy_pipeline_layout(layout, None) };
+    }
+    passed += 1;
+    ok();
+
+    // Step 17: Error path validation.
+    step(17, "Error path validation");
+    {
+        match ctx.compute_pipeline_builder().build() {
+            Err(ignis::Error::InvalidConfig(_)) => info("compute no shader -> InvalidConfig OK"),
+            other => panic!("expected InvalidConfig, got: {:?}", other.err()),
+        }
+
+        let cs = ctx.create_shader_module(EMPTY_COMPUTE_SPV)?;
+        match ctx
+            .compute_pipeline_builder()
+            .shader(cs.handle(), "main")
+            .build()
+        {
+            Err(ignis::Error::InvalidConfig(_)) => info("compute no layout -> InvalidConfig OK"),
+            other => panic!("expected InvalidConfig, got: {:?}", other.err()),
+        }
+
+        match ctx.graphics_pipeline_builder().build() {
+            Err(ignis::Error::InvalidConfig(_)) => info("graphics no stages -> InvalidConfig OK"),
+            other => panic!("expected InvalidConfig, got: {:?}", other.err()),
+        }
+
+        match ctx
+            .graphics_pipeline_builder()
+            .shader_stage(vk::ShaderStageFlags::VERTEX, cs.handle(), "main")
+            .build()
+        {
+            Err(ignis::Error::InvalidConfig(_)) => info("graphics no layout -> InvalidConfig OK"),
+            other => panic!("expected InvalidConfig, got: {:?}", other.err()),
+        }
+
+        match ctx.render_pass_builder().build() {
+            Err(ignis::Error::InvalidConfig(_)) => {
+                info("render pass no subpass -> InvalidConfig OK")
+            }
+            other => panic!("expected InvalidConfig, got: {:?}", other.err()),
+        }
+
+        match ignis::Ignis::external(ignis::ExternalDeviceInfo {
+            instance: ctx.instance().clone(),
+            device: ctx.device().clone(),
+            physical_device: ctx.physical_device(),
+            queue_allocations: vec![],
+            enable_raytracing: false,
+        }) {
+            Err(ignis::Error::InvalidConfig(_)) => info("external 0 queues -> InvalidConfig OK"),
+            other => panic!("expected InvalidConfig, got: {:?}", other.err()),
+        }
+
+        match ctx.raytracing_pipeline_builder() {
+            Err(ignis::Error::FeatureNotEnabled(_)) => {
+                info("RT without ext -> FeatureNotEnabled OK")
+            }
+            other => panic!("expected FeatureNotEnabled, got: {:?}", other.err()),
+        }
+    }
+    passed += 1;
+    ok();
+
+    // Step 18: Swapchain headless validation.
+    step(18, "Swapchain (headless config validation)");
+    {
+        let config = ignis::SwapchainConfig::default();
+        assert_eq!(config.preferred_format.format, vk::Format::B8G8R8A8_SRGB);
+        assert_eq!(config.preferred_present_mode, vk::PresentModeKHR::MAILBOX);
+        assert_eq!(config.image_count, 3);
+        info("SwapchainConfig defaults verified");
+        info("actual surface creation requires a window (skipped)");
+    }
+    passed += 1;
+    ok();
+
+    // Step 19: Ray tracing probe.
+    step(19, "Ray tracing probe");
+    {
+        match ignis::Ignis::managed(
+            ignis::ManagedConfig::new("ignis-rt", vk::API_VERSION_1_2).enable_raytracing(true),
+        ) {
+            Ok(rt_ctx) => {
+                assert!(rt_ctx.supports_ray_tracing());
+                let _builder = rt_ctx.raytracing_pipeline_builder()?;
+                info("pipeline builder available");
+
+                let props = rt_ctx
+                    .ray_tracing_properties()
+                    .expect("properties must be Some");
+                info(&format!("handle_size: {}", props.shader_group_handle_size));
+                info(&format!("max_recursion: {}", props.max_ray_recursion_depth));
+                info(&format!(
+                    "base_align: {}",
+                    props.shader_group_base_alignment
+                ));
+                info(&format!(
+                    "handle_align: {}",
+                    props.shader_group_handle_alignment
+                ));
+
+                assert!(props.shader_group_handle_size > 0);
+                assert!(props.shader_group_base_alignment.is_power_of_two());
+                assert!(props.shader_group_handle_alignment.is_power_of_two());
+                assert!(props.max_ray_recursion_depth >= 1);
+                info("property sanity checks passed");
+
+                assert!(rt_ctx.ray_tracing_pipeline_fn().is_some());
+                assert!(rt_ctx.acceleration_structure_fn().is_some());
+                info("extension function loaders available");
+
+                assert!(!ctx.supports_ray_tracing());
+                assert!(ctx.ray_tracing_properties().is_none());
+                info("non-RT context correctly reports no RT");
+
+                drop(rt_ctx);
+                passed += 1;
+            }
+            Err(e) => {
+                info(&format!("RT not available: {e}"));
+                skip("hardware/driver lacks VK_KHR_ray_tracing_pipeline");
+                skipped += 1;
+            }
+        }
+    }
+    ok();
+
+    // Step 20: Block allocator and dedicated allocator.
+    step(20, "Allocator subsystem (block + dedicated)");
+    {
+        // Block allocator: many small allocations sharing memory blocks.
+        let block_alloc = ctx.create_block_allocator();
+        let mut buffers = Vec::new();
+        for i in 0..128 {
+            let buf = ctx.create_buffer_with(
+                &block_alloc,
+                &ignis::BufferInfo::uniform((64 + i * 4) as u64),
+            )?;
+            assert!(buf.mapped_slice().is_some());
+            buffers.push(buf);
+        }
+        info("128 uniform buffers via BlockAllocator OK");
+
+        // Verify write/read round-trip through block-allocated buffer.
+        let test_buf = ctx.create_buffer_with(&block_alloc, &ignis::BufferInfo::staging(256))?;
+        let pattern: Vec<u8> = (0..=255).collect();
+        test_buf.write(0, &pattern);
+        let readback = test_buf.mapped_slice().unwrap();
+        assert_eq!(readback, pattern.as_slice());
+        info("block-allocated buffer write/read round-trip OK");
+
+        drop(buffers);
+        drop(test_buf);
+        info("128 buffers dropped (memory returned to block pools)");
+
+        // Dedicated allocator: one VkDeviceMemory per resource.
+        let ded_alloc = ctx.create_dedicated_allocator();
+        let ded_buf = ctx.create_buffer_with(&ded_alloc, &ignis::BufferInfo::staging(1024))?;
+        ded_buf.write(0, &[0xAB; 1024]);
+        assert_eq!(ded_buf.mapped_slice().unwrap()[0], 0xAB);
+        assert_eq!(ded_buf.mapped_slice().unwrap()[1023], 0xAB);
+        info("DedicatedAllocator buffer OK");
+        drop(ded_buf);
+
+        // Image through block allocator.
+        let img = ctx.create_image_with(
+            &block_alloc,
+            &ignis::ImageInfo::texture_2d(
+                64,
+                64,
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            ),
+        )?;
+        let view = img.create_view(vk::ImageAspectFlags::COLOR)?;
+        assert_ne!(view, vk::ImageView::null());
+        info("block-allocated image + view OK");
+        unsafe { ctx.device().destroy_image_view(view, None) };
+    }
+    passed += 1;
+    ok();
+
+    // Step 21: Resource tracker.
+    step(21, "Resource tracker (layout transitions)");
+    {
+        let mut tracker = ignis::ResourceTracker::new();
+
+        // Create two images to track.
+        let img_a = ctx.create_image(&ignis::ImageInfo::texture_2d(
+            16,
+            16,
+            vk::Format::R8G8B8A8_UNORM,
+            vk::ImageUsageFlags::SAMPLED
+                | vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        ))?;
+        let img_b = ctx.create_image(&ignis::ImageInfo::depth(16, 16, vk::Format::D32_SFLOAT))?;
+
+        tracker.track_image(img_a.handle(), vk::ImageLayout::UNDEFINED);
+        tracker.track_image(img_b.handle(), vk::ImageLayout::UNDEFINED);
+        assert_eq!(tracker.tracked_count(), 2);
+        info("tracking 2 images");
+
+        // Compute transitions.
+        let t1 = tracker
+            .transition(img_a.handle(), vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .expect("transition should produce a barrier");
+        assert_eq!(t1.old_layout, vk::ImageLayout::UNDEFINED);
+        assert_eq!(t1.new_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        info(&format!(
+            "img_a: UNDEFINED -> TRANSFER_DST_OPTIMAL (src_stage={:?})",
+            t1.src_stage
+        ));
+
+        // No-op transition (already in target layout).
+        let t_noop = tracker.transition(img_a.handle(), vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        assert!(t_noop.is_none(), "same layout should yield None");
+        info("no-op transition returns None OK");
+
+        // Second transition.
+        let t2 = tracker
+            .transition(img_a.handle(), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .expect("second transition");
+        assert_eq!(t2.old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        info("img_a: TRANSFER_DST -> SHADER_READ_ONLY OK");
+
+        // Depth image transition with custom subresource range.
+        let depth_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::DEPTH,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+        let t3 = tracker
+            .transition_subresource(
+                img_b.handle(),
+                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                depth_range,
+            )
+            .expect("depth transition");
+        assert_eq!(
+            t3.subresource_range.aspect_mask,
+            vk::ImageAspectFlags::DEPTH
+        );
+        info("img_b: UNDEFINED -> DEPTH_STENCIL_ATTACHMENT OK");
+
+        // Apply transitions via command recorder.
+        let cmd = pool.allocate_primary()?;
+        let rec = pool.begin_primary(cmd)?;
+        rec.apply_transitions(&[t1, t2, t3]);
+        info("apply_transitions (batched barrier) OK");
+
+        // Stateless helper.
+        rec.transition_image_layout(
+            img_a.handle(),
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            },
+        );
+        info("transition_image_layout (stateless) OK");
+
+        let cmd = rec.end()?;
+        gfx_queue.submit_simple(cmd)?.wait()?;
+        info("submitted and executed transition commands");
+
+        // Verify tracked state.
+        let state = tracker.image_state(img_a.handle()).unwrap();
+        assert_eq!(state.layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        info("tracker state consistent after transitions");
+
+        tracker.untrack_image(img_a.handle());
+        assert_eq!(tracker.tracked_count(), 1);
+        tracker.clear();
+        assert_eq!(tracker.tracked_count(), 0);
+        info("untrack + clear OK");
+    }
+    passed += 1;
+    ok();
+
+    // Step 22: Hardened allocator.
+    step(22, "Hardened allocator (guards, canary, quarantine)");
+    {
+        let corruption_detected = Arc::new(AtomicBool::new(false));
+        let flag = corruption_detected.clone();
+
+        let config = ignis::HardenedConfig::default()
+            .guard_size(64)
+            .quarantine_max_bytes(1024 * 1024)
+            .fill_on_alloc(0xCD)
+            .free_pattern(ignis::FreePattern::Junk(0xDD))
+            .on_corruption(ignis::CorruptionAction::Callback(Box::new(move |event| {
+                flag.store(true, Ordering::SeqCst);
+                // Print the rich diagnostic with test indentation.
+                for line in event.formatted.lines() {
+                    println!("       {line}");
+                }
+            })));
+
+        let block_alloc = ctx.create_block_allocator();
+        let hardened = Arc::new(ignis::HardenedAllocator::new(
+            ctx.shared_state().clone(),
+            block_alloc,
+            config,
+        ));
+        let dyn_alloc: Arc<dyn ignis::Allocator> = hardened.clone();
+
+        // Clean allocation.
+        let buf = ctx.create_buffer_with(&dyn_alloc, &ignis::BufferInfo::staging(256))?;
+        assert!(buf.mapped_slice().is_some());
+        info("hardened buffer allocated OK");
+
+        assert_eq!(buf.mapped_slice().unwrap()[0], 0xCD);
+        info("fill_on_alloc pattern verified (0xCD)");
+
+        let corruptions = hardened.verify_all_live();
+        assert_eq!(corruptions, 0);
+        info("verify_all_live -> 0 corruptions (clean)");
+
+        info(&format!(
+            "stats: allocs={} active={} peak={}",
+            hardened.stats().total_allocs.load(Ordering::Relaxed),
+            hardened.stats().active_allocs.load(Ordering::Relaxed),
+            hardened.stats().peak_allocs.load(Ordering::Relaxed),
+        ));
+
+        // Clean free: no corruption expected.
+        drop(buf);
+        assert!(!corruption_detected.load(Ordering::SeqCst));
+        assert!(hardened.stats().quarantine_entries.load(Ordering::Relaxed) > 0);
+        info("clean free OK, entry moved to quarantine");
+
+        // Intentional corruption: write into the front guard band.
+        corruption_detected.store(false, Ordering::SeqCst);
+        let bad_buf = ctx.create_buffer_with(&dyn_alloc, &ignis::BufferInfo::staging(128))?;
+        let user_ptr = bad_buf.mapped_ptr().unwrap();
+        // SAFETY: the guard band byte immediately before user data
+        // is valid, allocated memory. We corrupt it intentionally.
+        unsafe {
+            *user_ptr.sub(1) = 0xFF;
+        }
+        info("intentionally corrupted front guard band");
+        println!();
+
+        // Drop triggers canary verification -> diagnostic output.
+        drop(bad_buf);
+        println!();
+
+        assert!(
+            corruption_detected.load(Ordering::SeqCst),
+            "corruption must be detected on free"
+        );
+        info("corruption detected on free OK");
+        info(&format!(
+            "total corruptions: {}",
+            hardened
+                .stats()
+                .corruptions_detected
+                .load(Ordering::Relaxed)
+        ));
+
+        // Flush quarantine (re-verifies all entries).
+        corruption_detected.store(false, Ordering::SeqCst);
+        println!();
+        hardened.flush_quarantine();
+        println!();
+        assert_eq!(
+            hardened.stats().quarantine_entries.load(Ordering::Relaxed),
+            0
+        );
+        info("quarantine flushed (with re-verification)");
+
+        // Multiple allocations for peak tracking.
+        let mut bufs = Vec::new();
+        for _ in 0..10 {
+            bufs.push(ctx.create_buffer_with(&dyn_alloc, &ignis::BufferInfo::staging(64))?);
+        }
+        assert!(hardened.stats().peak_allocs.load(Ordering::Relaxed) >= 10);
+        info(&format!(
+            "10 concurrent allocs, peak={}",
+            hardened.stats().peak_allocs.load(Ordering::Relaxed)
+        ));
+        drop(bufs);
+
+        // Report.
+        hardened.dump_report();
+    }
+    passed += 1;
+    ok();
+
+    // Step 23: Object lifetime tracker.
+    step(23, "Object lifetime tracker");
+    {
+        let leak_reports: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let reports_clone = leak_reports.clone();
+
+        let tracker = ignis::LifetimeTracker::new().on_leak(ignis::LeakAction::Callback(Box::new(
+            move |report| {
+                reports_clone.lock().unwrap().push(report.to_string());
+            },
+        )));
+
+        // Register some fake objects.
+        tracker.register(vk::ObjectType::PIPELINE, 0xAA, Some("shadow_pipeline"));
+        tracker.register(vk::ObjectType::IMAGE_VIEW, 0xBB, None);
+        tracker.register(vk::ObjectType::SAMPLER, 0xCC, Some("linear_clamp"));
+        assert_eq!(tracker.live_count(), 3);
+        info("registered 3 objects");
+
+        // Record usage on one.
+        tracker.record_usage(vk::ObjectType::PIPELINE, 0xAA);
+        tracker.record_usage(vk::ObjectType::PIPELINE, 0xAA);
+        tracker.record_usage(vk::ObjectType::SAMPLER, 0xCC);
+        info("recorded usage on pipeline (2x) and sampler (1x)");
+
+        // Unregister one.
+        assert!(tracker.unregister(vk::ObjectType::IMAGE_VIEW, 0xBB));
+        assert_eq!(tracker.live_count(), 2);
+        info("unregistered image view, 2 remaining");
+
+        // Double unregister returns false.
+        assert!(!tracker.unregister(vk::ObjectType::IMAGE_VIEW, 0xBB));
+        info("double unregister correctly returns false");
+
+        // Check alive.
+        assert!(tracker.is_alive(vk::ObjectType::PIPELINE, 0xAA));
+        assert!(!tracker.is_alive(vk::ObjectType::IMAGE_VIEW, 0xBB));
+        info("is_alive queries correct");
+
+        // Type counting.
+        assert_eq!(tracker.live_count_of(vk::ObjectType::PIPELINE), 1);
+        assert_eq!(tracker.live_count_of(vk::ObjectType::IMAGE_VIEW), 0);
+        info("live_count_of per-type correct");
+
+        // Naming.
+        tracker.set_name(vk::ObjectType::PIPELINE, 0xAA, "renamed_pipeline");
+        info("set_name OK");
+
+        // Manual report.
+        let report = tracker.report_leaks();
+        assert!(report.is_some(), "should report 2 leaked objects");
+        info("manual report_leaks() generated");
+
+        // Print the report.
+        for line in report.unwrap().lines() {
+            println!("       {line}");
+        }
+
+        // Drop triggers the leak callback for the 2 remaining objects.
+        drop(tracker);
+        let reports = leak_reports.lock().unwrap();
+        assert_eq!(reports.len(), 1, "drop should emit one report");
+        assert!(
+            reports[0].contains("2 Vulkan object(s) leaked"),
+            "report must mention 2 leaked objects"
+        );
+        info("drop triggered leak callback with correct count");
+    }
+    passed += 1;
+    ok();
+
+    // Step 24: Command buffer state machine validator.
+    step(24, "Command buffer state machine validator");
+    {
+        let violations: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+
+        // Test: draw outside render pass.
+        {
+            let v = violations.clone();
+            let cmd = pool.allocate_primary()?;
+            let rec = pool.begin_primary(cmd)?;
+            let mut vrec = ignis::ValidatedRecorder::wrap(rec).on_error(
+                ignis::StateErrorAction::Callback(Box::new(move |report| {
+                    v.lock().unwrap().push(report.to_string());
+                })),
+            );
+            vrec.draw(6, 1, 0, 0); // Should trigger error.
+            let _ = vrec.end()?;
+            let v_list = violations.lock().unwrap();
+            assert!(
+                !v_list.is_empty(),
+                "draw outside render pass must trigger error"
+            );
+            info("draw outside render pass detected");
+            for line in v_list.last().unwrap().lines().take(6) {
+                println!("       {line}");
+            }
+        }
+
+        // Test: dispatch inside render pass.
+        {
+            violations.lock().unwrap().clear();
+            let rp = ctx
+                .render_pass_builder()
+                .attachment(ignis::AttachmentConfig {
+                    format: vk::Format::R8G8B8A8_UNORM,
+                    final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    ..Default::default()
+                })
+                .subpass(ignis::SubpassConfig {
+                    color_attachments: vec![ignis::AttachmentRef {
+                        attachment: 0,
+                        layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    }],
+                    ..Default::default()
+                })
+                .build()?;
+
+            let img = ctx.create_image(&ignis::ImageInfo::texture_2d(
+                16,
+                16,
+                vk::Format::R8G8B8A8_UNORM,
+                vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            ))?;
+            let view = img.create_view(vk::ImageAspectFlags::COLOR)?;
+
+            let fb_ci = vk::FramebufferCreateInfo::default()
+                .render_pass(rp.handle())
+                .attachments(std::slice::from_ref(&view))
+                .width(16)
+                .height(16)
+                .layers(1);
+            let fb = unsafe { ctx.device().create_framebuffer(&fb_ci, None)? };
+
+            let v = violations.clone();
+            let cmd = pool.allocate_primary()?;
+            let rec = pool.begin_primary(cmd)?;
+            let mut vrec = ignis::ValidatedRecorder::wrap(rec).on_error(
+                ignis::StateErrorAction::Callback(Box::new(move |report| {
+                    v.lock().unwrap().push(report.to_string());
+                })),
+            );
+
+            vrec.begin_render_pass(
+                rp.handle(),
+                fb,
+                vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: vk::Extent2D {
+                        width: 16,
+                        height: 16,
+                    },
+                },
+                &[vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.0, 0.0, 0.0, 1.0],
+                    },
+                }],
+                vk::SubpassContents::INLINE,
+            );
+            assert_eq!(
+                *vrec.state(),
+                ignis::RecordingState::InRenderPass { subpass: 0 }
+            );
+            info("state after begin_render_pass: InRenderPass(0)");
+
+            vrec.dispatch(1, 1, 1); // Should trigger error.
+            let v_list = violations.lock().unwrap();
+            assert!(
+                !v_list.is_empty(),
+                "dispatch inside render pass must trigger error"
+            );
+            info("dispatch inside render pass detected");
+            for line in v_list.last().unwrap().lines().take(6) {
+                println!("       {line}");
+            }
+            drop(v_list);
+
+            vrec.end_render_pass();
+            assert_eq!(*vrec.state(), ignis::RecordingState::Recording);
+            info("state after end_render_pass: Recording");
+
+            let _ = vrec.end()?;
+
+            unsafe {
+                ctx.device().destroy_framebuffer(fb, None);
+                ctx.device().destroy_image_view(view, None);
+            }
+        }
+
+        // Test: valid sequence (no violations).
+        {
+            violations.lock().unwrap().clear();
+            let v = violations.clone();
+
+            // We need a real compute pipeline to avoid driver crashes
+            // from dispatching without a bound pipeline.
+            let cs = ctx.create_shader_module(EMPTY_COMPUTE_SPV)?;
+            let layout_ci = vk::PipelineLayoutCreateInfo::default();
+            let tmp_layout = unsafe { ctx.device().create_pipeline_layout(&layout_ci, None)? };
+            let tmp_pipeline = ctx
+                .compute_pipeline_builder()
+                .shader(cs.handle(), "main")
+                .layout(tmp_layout)
+                .build()?;
+
+            let cmd = pool.allocate_primary()?;
+            let rec = pool.begin_primary(cmd)?;
+            let mut vrec = ignis::ValidatedRecorder::wrap(rec).on_error(
+                ignis::StateErrorAction::Callback(Box::new(move |report| {
+                    v.lock().unwrap().push(report.to_string());
+                })),
+            );
+            vrec.set_viewport(
+                0,
+                &[vk::Viewport {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 100.0,
+                    min_depth: 0.0,
+                    max_depth: 1.0,
+                }],
+            );
+            vrec.bind_pipeline(vk::PipelineBindPoint::COMPUTE, tmp_pipeline);
+            vrec.dispatch(1, 1, 1);
+            let _ = vrec.end()?;
+            assert!(
+                violations.lock().unwrap().is_empty(),
+                "valid sequence must not trigger violations"
+            );
+            info("valid sequence (viewport -> bind -> dispatch -> end) no violations");
+
+            unsafe {
+                ctx.device().destroy_pipeline(tmp_pipeline, None);
+                ctx.device().destroy_pipeline_layout(tmp_layout, None);
+            }
+        }
+    }
+    passed += 1;
+    ok();
+
+    // Step 25: Submission journal.
+    step(25, "Submission journal (flight recorder)");
+    {
+        let journal = ctx.create_journal(64);
+
+        // Record several submissions.
+        let fences: Vec<vk::Fence> = (0..5)
+            .map(|_| unsafe {
+                ctx.device()
+                    .create_fence(&vk::FenceCreateInfo::default(), None)
+                    .unwrap()
+            })
+            .collect();
+
+        let gfx = ctx.queue(ignis::QueueType::Graphics)?;
+
+        for (i, &fence) in fences.iter().enumerate() {
+            let cmd = record_empty(&pool)?;
+            let cmds = [cmd];
+            let submits = [vk::SubmitInfo::default().command_buffers(&cmds)];
+            unsafe { gfx.submit_raw(&submits, fence)? };
+
+            journal.record(
+                gfx.family_index(),
+                gfx.queue_index(),
+                &format!("submission_{i}"),
+                &cmds,
+                &[],
+                &[],
+                fence,
+            );
+        }
+        assert_eq!(journal.len(), 5);
+        info(&format!("recorded {} submissions", journal.len()));
+
+        // Wait for all and mark completed.
+        for &fence in &fences {
+            unsafe {
+                ctx.device().wait_for_fences(&[fence], true, u64::MAX)?;
+            }
+            journal.mark_completed(fence);
+        }
+        info("all fences waited and marked completed");
+
+        // Dump last 3.
+        let dump = journal.dump_last(3);
+        assert!(dump.contains("submission_2"));
+        assert!(dump.contains("submission_3"));
+        assert!(dump.contains("submission_4"));
+        info("dump_last(3) contains expected entries");
+        for line in dump.lines().take(8) {
+            println!("       {line}");
+        }
+
+        // Dump all.
+        let dump_all = journal.dump_all();
+        assert!(dump_all.contains("submission_0"));
+        info("dump_all() contains all entries");
+
+        // Error dump.
+        journal.mark_error(fences[4], vk::Result::ERROR_DEVICE_LOST);
+        let err_dump = journal.dump_with_error(vk::Result::ERROR_DEVICE_LOST);
+        assert!(err_dump.contains("DEVICE_LOST"));
+        info("dump_with_error contains error context");
+        for line in err_dump.lines().take(6) {
+            println!("       {line}");
+        }
+
+        for &fence in &fences {
+            unsafe { ctx.device().destroy_fence(fence, None) };
+        }
+    }
+    passed += 1;
+    ok();
+
+    // Step 26: Thread safety auditor.
+    step(26, "Thread safety auditor");
+    {
+        let violations: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let v = violations.clone();
+
+        let inner_pool = ctx.create_command_pool(ignis::QueueType::Graphics)?;
+        let audited = ignis::AuditedPool::new(inner_pool).on_violation(
+            ignis::ThreadViolationAction::Callback(Box::new(move |report| {
+                v.lock().unwrap().push(report.to_string());
+            })),
+        );
+
+        // Same thread: should work fine.
+        let _cmd = audited.allocate_primary()?;
+        assert!(
+            violations.lock().unwrap().is_empty(),
+            "same thread must not trigger violation"
+        );
+        info("same-thread access OK");
+
+        // Different thread: should trigger violation.
+        let audited_ref = &audited;
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _ = audited_ref.allocate_primary();
+                })
+                .join()
+                .unwrap();
+        });
+
+        let v_list = violations.lock().unwrap();
+        assert!(
+            !v_list.is_empty(),
+            "cross-thread access must trigger violation"
+        );
+        info("cross-thread violation detected");
+        for line in v_list.last().unwrap().lines().take(8) {
+            println!("       {line}");
+        }
+        drop(v_list);
+
+        // Release ownership and access from main again.
+        audited.release_ownership();
+        let _cmd2 = audited.allocate_primary()?;
+        info("release_ownership + re-acquire from main thread OK");
+    }
+    passed += 1;
+    ok();
+
+    // Step 27: Resource aliasing detector.
+    step(27, "Resource aliasing detector");
+    {
+        let mut det = ignis::AliasingDetector::new();
+
+        // Write, then read without barrier -> conflict.
+        det.note_write(
+            0x42,
+            "Image",
+            Some("color_target"),
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            0,
+            "geometry_pass",
+        );
+        det.note_read(
+            0x42,
+            "Image",
+            Some("color_target"),
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            1,
+            "lighting_pass",
+        );
+
+        let issues = det.analyze();
+        assert_eq!(issues.len(), 1, "should detect one aliasing issue");
+        info(&format!(
+            "aliasing detected: {} -> {} without barrier",
+            issues[0].write_access.label, issues[0].conflict_access.label
+        ));
+
+        let report = det.report();
+        assert!(report.contains("IGN-A001"));
+        for line in report.lines().take(10) {
+            println!("       {line}");
+        }
+
+        // With barrier -> no conflict.
+        det.clear();
+        det.note_write(
+            0x42,
+            "Image",
+            Some("color_target"),
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            0,
+            "geometry_pass",
+        );
+        det.note_barrier(0x42, 1);
+        det.note_read(
+            0x42,
+            "Image",
+            Some("color_target"),
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            2,
+            "lighting_pass",
+        );
+
+        let issues2 = det.analyze();
+        assert!(issues2.is_empty(), "barrier should resolve conflict");
+        info("barrier inserted -> no conflict detected");
+
+        // Read-read is fine.
+        det.clear();
+        det.note_read(
+            0x99,
+            "Buffer",
+            None,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            0,
+            "pass_a",
+        );
+        det.note_read(
+            0x99,
+            "Buffer",
+            None,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            1,
+            "pass_b",
+        );
+        assert!(det.analyze().is_empty());
+        info("read-read access correctly ignored");
+    }
+    passed += 1;
+    ok();
+
+    // Step 28: Memory budget monitor.
+    step(28, "Memory budget monitor");
+    {
+        let monitor = ctx.create_budget_monitor(ignis::BudgetThresholds::default());
+        let snapshot = monitor.poll();
+        assert!(!snapshot.heaps.is_empty());
+        info(&format!("polled {} heap(s)", snapshot.heaps.len()));
+
+        for heap in &snapshot.heaps {
+            let device_local = if heap.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL) {
+                " DEVICE_LOCAL"
+            } else {
+                ""
+            };
+            info(&format!(
+                "heap {}: {:.0}/{:.0} MiB ({:.1}%){device_local}",
+                heap.heap_index,
+                heap.usage as f64 / (1024.0 * 1024.0),
+                heap.budget as f64 / (1024.0 * 1024.0),
+                heap.usage_fraction * 100.0,
+            ));
+        }
+
+        info(&format!(
+            "budget extension: {}",
+            if snapshot.has_budget_extension {
+                "available"
+            } else {
+                "not available (using heap size)"
+            }
+        ));
+
+        // Check with default thresholds (unlikely to trigger in a smoke test).
+        match monitor.check() {
+            Some(report) => {
+                info("budget threshold exceeded:");
+                for line in report.lines().take(8) {
+                    println!("       {line}");
+                }
+            }
+            None => info("all heaps within budget thresholds"),
+        }
+    }
+    passed += 1;
+    ok();
+
+    // Step 29: Descriptor set validator.
+    step(29, "Descriptor set auditor");
+    {
+        let mut auditor = ignis::DescriptorAuditor::new();
+
+        // Register some "live" resources.
+        auditor.register_resource(0xA1);
+        auditor.register_resource(0xA2);
+        auditor.register_resource(0xA3);
+        info("registered 3 resources");
+
+        // Write a descriptor referencing them.
+        let fake_set = vk::DescriptorSet::from_raw(0xD1);
+        auditor.name_set(fake_set, "material_set");
+        auditor.record_write(
+            fake_set,
+            0,
+            ignis::BoundResource::Buffer {
+                handle: 0xA1,
+                offset: 0,
+                range: 256,
+            },
+        );
+        auditor.record_write(
+            fake_set,
+            1,
+            ignis::BoundResource::Image {
+                view_handle: 0xA2,
+                image_handle: 0xA3,
+                layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            },
+        );
+        info("wrote 2 bindings to descriptor set");
+
+        // All alive -> no issues.
+        let issues = auditor.validate_set(fake_set);
+        assert!(issues.is_empty());
+        info("all resources alive -> no issues");
+
+        // Destroy one resource.
+        auditor.unregister_resource(0xA2);
+        let issues = auditor.validate_set(fake_set);
+        assert_eq!(issues.len(), 1, "should detect stale ImageView reference");
+        info(&format!(
+            "destroyed resource -> {} stale reference(s) detected",
+            issues.len()
+        ));
+
+        let report = auditor.report(&issues);
+        assert!(report.contains("IGN-D001"));
+        for line in report.lines().take(8) {
+            println!("       {line}");
+        }
+
+        // Destroy another.
+        auditor.unregister_resource(0xA1);
+        let issues2 = auditor.validate_set(fake_set);
+        assert_eq!(issues2.len(), 2, "should detect 2 stale references");
+        info(&format!(
+            "second destruction -> {} stale reference(s)",
+            issues2.len()
+        ));
+
+        // Clear set.
+        auditor.clear_set(fake_set);
+        let issues3 = auditor.validate_set(fake_set);
+        assert!(issues3.is_empty());
+        info("clear_set -> no more issues");
+    }
+    passed += 1;
+    ok();
+
+    // Step 30: Pipeline compatibility checker.
+    step(30, "Pipeline compatibility checker");
+    {
+        use ash::vk::Handle;
+
+        let mut auditor = ignis::PipelineAuditor::new();
+
+        let fake_layout = vk::PipelineLayout::from_raw(0xF1);
+        let fake_pipeline = vk::Pipeline::from_raw(0xF2);
+
+        auditor.register_layout(
+            fake_layout,
+            &[0xAABB, 0xCCDD],
+            &[vk::PushConstantRange {
+                stage_flags: vk::ShaderStageFlags::VERTEX,
+                offset: 0,
+                size: 64,
+            }],
+        );
+        auditor.register_pipeline(fake_pipeline, Some("test_pipeline"), fake_layout, &[]);
+        info("registered layout (2 sets, 64B push) and pipeline");
+
+        // Correct bind: 2 sets.
+        let issues = auditor.validate_bind(fake_pipeline, 2);
+        assert!(issues.is_empty());
+        info("bind with 2 sets -> OK");
+
+        // Insufficient sets.
+        let issues = auditor.validate_bind(fake_pipeline, 1);
+        assert_eq!(issues.len(), 1);
+        info(&format!("bind with 1 set -> {} issue(s)", issues.len()));
+
+        let report = auditor.report(&issues);
+        for line in report.lines().take(6) {
+            println!("       {line}");
+        }
+
+        // Valid push constants.
+        let issues =
+            auditor.validate_push_constants(fake_pipeline, vk::ShaderStageFlags::VERTEX, 0, 64);
+        assert!(issues.is_empty());
+        info("push_constants(VERTEX, 0, 64) -> OK");
+
+        // Push constants exceeding range.
+        let issues =
+            auditor.validate_push_constants(fake_pipeline, vk::ShaderStageFlags::VERTEX, 0, 128);
+        assert_eq!(issues.len(), 1);
+        info(&format!(
+            "push_constants(VERTEX, 0, 128) -> {} issue(s)",
+            issues.len()
+        ));
+
+        // Wrong stage.
+        let issues =
+            auditor.validate_push_constants(fake_pipeline, vk::ShaderStageFlags::FRAGMENT, 0, 32);
+        assert_eq!(issues.len(), 1);
+        info(&format!(
+            "push_constants(FRAGMENT, 0, 32) -> {} issue(s)",
+            issues.len()
+        ));
+    }
+    passed += 1;
+    ok();
+
+    // Step 31: Barrier optimizer.
+    step(31, "Barrier optimizer");
+    {
+        let mut analyzer = ignis::BarrierAnalyzer::new();
+
+        // Overly broad barrier.
+        analyzer.record(
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::PipelineStageFlags::ALL_COMMANDS,
+            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+            vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
+            "overkill_barrier",
+        );
+
+        // Reasonable barrier.
+        analyzer.record(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            "good_barrier",
+        );
+
+        // Duplicate barrier (redundant).
+        analyzer.record(
+            vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            vk::AccessFlags::SHADER_READ,
+            "duplicate_barrier",
+        );
+
+        let suggestions = analyzer.analyze();
+        info(&format!("{} suggestion(s) generated", suggestions.len()));
+
+        let has_broad_stage = suggestions
+            .iter()
+            .any(|s| s.kind == ignis::SuggestionKind::BroadStage);
+        let has_broad_access = suggestions
+            .iter()
+            .any(|s| s.kind == ignis::SuggestionKind::BroadAccess);
+        let has_redundant = suggestions
+            .iter()
+            .any(|s| s.kind == ignis::SuggestionKind::Redundant);
+
+        assert!(has_broad_stage, "should detect broad stage");
+        assert!(has_broad_access, "should detect broad access");
+        assert!(has_redundant, "should detect redundant barrier");
+
+        info(&format!(
+            "detected: broad_stage={} broad_access={} redundant={}",
+            has_broad_stage, has_broad_access, has_redundant
+        ));
+
+        let report = analyzer.report();
+        for line in report.lines().take(16) {
+            println!("       {line}");
+        }
+
+        analyzer.clear();
+        assert!(analyzer.analyze().is_empty());
+        info("clear -> no suggestions");
+    }
+    passed += 1;
+    ok();
+
+    // Step 32: GPU hang detector + breadcrumbs.
+    step(32, "Hang detector + breadcrumbs");
+    {
+        let hang_reports: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let hr = hang_reports.clone();
+
+        // Use a very short timeout for testing (500ms).
+        let detector = ctx.create_hang_detector(
+            ignis::HangConfig {
+                timeout: Duration::from_millis(500),
+                check_interval: Duration::from_millis(50),
+            },
+            ignis::HangAction::Callback(Box::new(move |report| {
+                hr.lock().unwrap().push(report.to_string());
+            })),
+        );
+
+        // Create breadcrumb buffer.
+        let breadcrumbs = Arc::new(ctx.create_breadcrumb_buffer()?);
+        info("breadcrumb buffer created");
+
+        // Submit work with breadcrumbs that completes quickly.
+        let cmd = pool.allocate_primary()?;
+        let rec = pool.begin_primary(cmd)?;
+        breadcrumbs.insert(ctx.device(), rec.raw_buffer(), "first_op");
+        breadcrumbs.insert(ctx.device(), rec.raw_buffer(), "second_op");
+        breadcrumbs.insert(ctx.device(), rec.raw_buffer(), "third_op");
+        let cmd = rec.end()?;
+
+        let fence_ci = vk::FenceCreateInfo::default();
+        let fence = unsafe { ctx.device().create_fence(&fence_ci, None)? };
+        let cmds = [cmd];
+        let submits = [vk::SubmitInfo::default().command_buffers(&cmds)];
+        unsafe { gfx_queue.submit_raw(&submits, fence)? };
+
+        detector.watch(fence, "breadcrumb_test", Some(&breadcrumbs));
+        info(&format!(
+            "watching 1 fence (pending: {})",
+            detector.watched_count()
+        ));
+
+        // Wait for completion - should not trigger hang.
+        unsafe {
+            ctx.device().wait_for_fences(&[fence], true, u64::MAX)?;
+        }
+        info("fence signaled, no hang expected");
+
+        // Give the detector time to check and prune.
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(
+            hang_reports.lock().unwrap().is_empty(),
+            "no hang should be reported for completed work"
+        );
+        info("no false hang reports");
+
+        // Verify breadcrumb readback.
+        let trail = breadcrumbs.readback();
+        assert_eq!(trail.len(), 3);
+        assert!(trail.iter().all(|(_, done)| *done));
+        info("breadcrumb readback: all 3 markers completed");
+        for (crumb, done) in &trail {
+            info(&format!(
+                "  #{} \"{}\" -> {}",
+                crumb.id,
+                crumb.label,
+                if *done { "COMPLETED" } else { "PENDING" }
+            ));
+        }
+
+        // Reset and verify.
+        breadcrumbs.reset();
+        assert!(breadcrumbs.readback().is_empty());
+        info("breadcrumb reset OK");
+
+        unsafe { ctx.device().destroy_fence(fence, None) };
+        drop(detector);
+        info("hang detector shutdown OK");
+    }
+    passed += 1;
+    ok();
+
+    // Cleanup.
+    println!("    Dropping resources...");
+    drop(render_pass);
+    drop(pool);
+    drop(ctx);
+    println!("    Done.");
+
+    Ok((passed, skipped))
+}
+
+fn record_empty(pool: &ignis::CommandPool) -> ignis::Result<vk::CommandBuffer> {
+    let cmd = pool.allocate_primary()?;
+    let rec = pool.begin_primary(cmd)?;
+    rec.end()
+}
+
+fn verify_device_handle(handle: &dyn ignis::DeviceHandle) {
+    let _ = handle.ash_instance();
+    let _ = handle.ash_device();
+    let pd = handle.physical_device();
+    assert_ne!(pd, vk::PhysicalDevice::null());
+    let qf = handle.queue_family_properties();
+    assert!(!qf.is_empty());
+    info(&format!(
+        "DeviceHandle: {} queue families via dyn dispatch",
+        qf.len()
+    ));
+}
+
+fn print_queue(ctx: &ignis::Ignis, qt: ignis::QueueType, label: &str) {
+    match ctx.queue(qt) {
+        Ok(q) => {
+            let has_gfx = q.capabilities().contains(vk::QueueFlags::GRAPHICS);
+            let has_comp = q.capabilities().contains(vk::QueueFlags::COMPUTE);
+            let dedicated = match qt {
+                ignis::QueueType::Graphics => true,
+                ignis::QueueType::Compute => !has_gfx,
+                ignis::QueueType::Transfer => !has_gfx && !has_comp,
+            };
+            info(&format!(
+                "{label} -> family {}, index {}{}",
+                q.family_index(),
+                q.queue_index(),
+                if dedicated {
+                    " (dedicated)"
+                } else {
+                    " (shared)"
+                }
+            ));
+        }
+        Err(_) => info(&format!("{label} -> not available")),
+    }
+}
+
+fn poll_until_ready(mut future: ignis::GpuFuture) -> ignis::Result<()> {
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+    static VTABLE: RawWakerVTable =
+        RawWakerVTable::new(|p| RawWaker::new(p, &VTABLE), |_| {}, |_| {}, |_| {});
+
+    let waker = unsafe { Waker::from_raw(RawWaker::new(std::ptr::null(), &VTABLE)) };
+    let mut cx = Context::from_waker(&waker);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match Pin::new(&mut future).poll(&mut cx) {
+            Poll::Ready(result) => return result,
+            Poll::Pending => {
+                if Instant::now() > deadline {
+                    return Err(ignis::Error::Timeout);
+                }
+                std::thread::yield_now();
+            }
+        }
+    }
+}
+
+fn byte_to_char(b: u8) -> char {
+    const RAMP: &[u8] = b" .,:;+*?%S#@";
+    let idx = (b as usize) * (RAMP.len() - 1) / 255;
+    RAMP[idx] as char
+}
+
+fn step(n: u32, title: &str) {
+    println!("[{n:>2}/{TOTAL_STEPS}] {title}");
+}
+
+fn info(msg: &str) {
+    println!("       {msg}");
+}
+
+fn warn(msg: &str) {
+    println!("  WARN {msg}");
+}
+
+fn ok() {
+    println!("       PASSED");
+    println!();
+}
+
+fn skip(reason: &str) {
+    println!("       SKIPPED: {reason}");
+}

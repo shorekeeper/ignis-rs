@@ -1,0 +1,16 @@
+[package]
+name = "ignis"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+description = "Vulkan queue orchestration, memory management, and GPU debugging toolkit built on ash"
+license = "WTFPL"
+keywords = ["vulkan", "graphics", "async", "raytracing", "gpu"]
+categories = ["graphics", "rendering", "development-tools::debugging"]
+
+[dependencies]
+ash = "0.38"
+
+[[example]]
+name = "smoke_test"
+path = "examples/smoke_test.rs"

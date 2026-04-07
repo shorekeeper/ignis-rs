@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Vulkan SDK (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - run: cargo check --all-targets
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install Vulkan headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - run: cargo clippy --all-targets -- -D warnings
+
+  test-unit:
+    name: Unit tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Vulkan headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - run: cargo test --lib
+
+  test-gpu:
+    name: Smoke test (GPU)
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Vulkan + lavapipe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
+
+      - name: Check Vulkan ICD
+        id: vk
+        run: |
+          if vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run smoke test
+        if: steps.vk.outputs.ok == 'true'
+        run: cargo run --example smoke_test
+
+      - name: Skip notice
+        if: steps.vk.outputs.ok != 'true'
+        run: echo "No Vulkan ICD available, skipped"
+
+  doc:
+    name: Documentation
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Vulkan headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  msrv:
+    name: MSRV (1.70)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.70.0
+
+      - name: Install Vulkan headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - run: cargo check
