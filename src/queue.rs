@@ -21,19 +21,19 @@ use ash::vk;
 
 use crate::device::SharedState;
 use crate::error::{Error, Result};
-use crate::watcher::{FenceWatcher, WatchedFenceInner, WatchedFenceState};
+use crate::tracking::watcher::FenceWatcher;
 use crate::QueueType;
+use crate::tracking::timeline::{QueueTimeline, TimelineWatcher};
 
 /// A thread-safe asynchronous Vulkan queue.
-///
-/// The underlying `VkQueue` is protected by a mutex satisfying the Vulkan
-/// spec's external synchronization requirement.
 pub struct AsyncQueue {
     pub(crate) shared: Arc<SharedState>,
     handle: Mutex<vk::Queue>,
     family_index: u32,
     queue_index: u32,
     capabilities: vk::QueueFlags,
+    /// Timeline semaphore for this queue, if Vulkan 1.2+.
+    pub(crate) timeline: Option<Arc<QueueTimeline>>,
 }
 
 impl AsyncQueue {
@@ -43,6 +43,7 @@ impl AsyncQueue {
         family_index: u32,
         queue_index: u32,
         capabilities: vk::QueueFlags,
+        timeline: Option<Arc<QueueTimeline>>,
     ) -> Self {
         Self {
             shared,
@@ -50,6 +51,7 @@ impl AsyncQueue {
             family_index,
             queue_index,
             capabilities,
+            timeline,
         }
     }
 
@@ -77,6 +79,11 @@ impl AsyncQueue {
         self.capabilities.contains(queue_type.required_flags())
     }
 
+    /// The timeline semaphore for this queue, if available (Vulkan 1.2+).
+    pub fn timeline(&self) -> Option<&Arc<QueueTimeline>> {
+        self.timeline.as_ref()
+    }
+
     /// Begin building a queue submission.
     pub fn submit(&self) -> SubmitBuilder<'_> {
         SubmitBuilder {
@@ -85,7 +92,8 @@ impl AsyncQueue {
             wait_semaphores: Vec::new(),
             wait_stages: Vec::new(),
             signal_semaphores: Vec::new(),
-            watcher: None,
+            timeline_watcher: None,
+            fence_watcher: None,
         }
     }
 
@@ -124,7 +132,8 @@ pub struct SubmitBuilder<'a> {
     wait_semaphores: Vec<vk::Semaphore>,
     wait_stages: Vec<vk::PipelineStageFlags>,
     signal_semaphores: Vec<vk::Semaphore>,
-    watcher: Option<Arc<FenceWatcher>>,
+    timeline_watcher: Option<Arc<TimelineWatcher>>,
+    fence_watcher: Option<Arc<FenceWatcher>>,
 }
 
 impl<'a> SubmitBuilder<'a> {
@@ -157,20 +166,85 @@ impl<'a> SubmitBuilder<'a> {
         self
     }
 
-    /// Attach a [`FenceWatcher`] for efficient async completion.
-    ///
-    /// When a watcher is attached, the resulting [`GpuFuture`] registers
-    /// its fence with the watcher's background thread instead of busy-
-    /// waiting on poll.
-    pub fn with_watcher(mut self, watcher: &Arc<FenceWatcher>) -> Self {
-        self.watcher = Some(Arc::clone(watcher));
+    /// Attach a timeline watcher for efficient async completion (Vulkan 1.2+).
+    pub fn with_timeline_watcher(mut self, watcher: &Arc<TimelineWatcher>) -> Self {
+        self.timeline_watcher = Some(Arc::clone(watcher));
         self
     }
 
-    /// Submit the work and return a [`GpuFuture`] tracking completion.
+    /// Attach a legacy fence watcher (Vulkan 1.1 fallback).
+    /// Also available as `with_watcher` for backward compatibility.
+    pub fn with_fence_watcher(mut self, watcher: &Arc<FenceWatcher>) -> Self {
+        self.fence_watcher = Some(Arc::clone(watcher));
+        self
+    }
+
+    /// Backward-compatible alias for [`with_fence_watcher`](Self::with_fence_watcher).
+    pub fn with_watcher(self, watcher: &Arc<FenceWatcher>) -> Self {
+        self.with_fence_watcher(watcher)
+    }
+
+    /// Submit the accumulated work to the queue.
+    ///
+    /// If the queue has a timeline semaphore (Vulkan 1.2+), uses timeline
+    /// signaling with no fence. Otherwise falls back to a dedicated fence.
+    ///
+    /// Returns a [`GpuFuture`] tracking completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Vulkan error if fence creation or queue submission fails.
     pub fn build(self) -> Result<GpuFuture> {
         let device = &self.queue.shared.device;
 
+        // Timeline path (Vulkan 1.2+).
+        if let Some(timeline) = &self.queue.timeline {
+            let target_value = timeline.claim_next_value();
+
+            let mut signal_sems = self.signal_semaphores.clone();
+            signal_sems.push(timeline.semaphore());
+
+            let wait_values = vec![0u64; self.wait_semaphores.len()];
+            let mut signal_values = vec![0u64; self.signal_semaphores.len()];
+            signal_values.push(target_value);
+
+            let mut timeline_info = vk::TimelineSemaphoreSubmitInfo::default()
+                .wait_semaphore_values(&wait_values)
+                .signal_semaphore_values(&signal_values);
+
+            let submit_info = vk::SubmitInfo::default()
+                .push_next(&mut timeline_info)
+                .command_buffers(&self.command_buffers)
+                .wait_semaphores(&self.wait_semaphores)
+                .wait_dst_stage_mask(&self.wait_stages)
+                .signal_semaphores(&signal_sems);
+
+            let queue_handle = self.queue.handle.lock().unwrap();
+            let result = unsafe {
+                device.queue_submit(
+                    *queue_handle,
+                    std::slice::from_ref(&submit_info),
+                    vk::Fence::null(),
+                )
+            };
+            drop(queue_handle);
+
+            if let Err(e) = result {
+                return Err(Error::Vulkan(e));
+            }
+
+            return Ok(GpuFuture {
+                shared: Arc::clone(&self.queue.shared),
+                inner: FutureKind::Timeline {
+                    timeline: Arc::clone(timeline),
+                    target_value,
+                    watcher: self.timeline_watcher,
+                },
+                completed: false,
+            });
+        }
+
+        // Fence path (Vulkan 1.1 fallback).
         let fence_info = vk::FenceCreateInfo::default();
         let fence = unsafe { device.create_fence(&fence_info, None)? };
 
@@ -181,11 +255,9 @@ impl<'a> SubmitBuilder<'a> {
             .signal_semaphores(&self.signal_semaphores);
 
         let queue_handle = self.queue.handle.lock().unwrap();
-
         let result = unsafe {
             device.queue_submit(*queue_handle, std::slice::from_ref(&submit_info), fence)
         };
-
         drop(queue_handle);
 
         if let Err(e) = result {
@@ -193,105 +265,138 @@ impl<'a> SubmitBuilder<'a> {
             return Err(Error::Vulkan(e));
         }
 
-        // If a watcher is attached, register the fence for monitoring.
-        let watched = self.watcher.as_ref().map(|w| {
-            let state = Arc::new(WatchedFenceState {
-                fence,
-                inner: Mutex::new(WatchedFenceInner {
-                    completed: false,
-                    dropped: false,
-                    waker: None,
-                    error: None,
-                }),
-            });
-            w.watch(Arc::clone(&state));
-            state
-        });
-
         Ok(GpuFuture {
             shared: Arc::clone(&self.queue.shared),
-            fence,
+            inner: FutureKind::Fence { fence },
             completed: false,
-            watched,
         })
     }
 }
 
-/// A future representing an in-flight GPU operation.
-///
-/// Tracks completion via a Vulkan fence. Supports three usage patterns:
-///
-/// - **Blocking**: [`wait`](GpuFuture::wait) or [`wait_timeout`](GpuFuture::wait_timeout)
-/// - **Polling**: [`is_complete`](GpuFuture::is_complete)
-/// - **Async**: `.await` via the [`Future`] implementation
-///
-/// # Async Behavior
-///
-/// Without a [`FenceWatcher`], the `Future` implementation uses a busy-wait
-/// fallback (immediately re-schedules on each poll), consuming one CPU core.
-///
-/// With a `FenceWatcher` (attached via [`SubmitBuilder::with_watcher`]),
-/// the future registers with the watcher thread which periodically checks
-/// fence status and wakes the task only when the fence signals.
-///
-/// # Drop Safety
-///
-/// On drop, the future blocks until the fence is signaled to prevent
-/// destroying an in-use fence. If a watcher is attached, the `dropped`
-/// flag is set first under its per-entry lock, ensuring the watcher
-/// never accesses the fence after destruction.
-pub struct GpuFuture {
-    shared: Arc<SharedState>,
-    fence: vk::Fence,
-    completed: bool,
-    watched: Option<Arc<WatchedFenceState>>,
+enum FutureKind {
+    Timeline {
+        timeline: Arc<QueueTimeline>,
+        target_value: u64,
+        watcher: Option<Arc<TimelineWatcher>>,
+    },
+    Fence {
+        fence: vk::Fence,
+    },
 }
 
+/// A future representing in-flight GPU work.
+///
+/// # Timeline mode (Vulkan 1.2+)
+///
+/// Uses a timeline semaphore. `drop()` is free - no blocking, no fence
+/// cleanup. Safe to drop from any async executor.
+///
+/// # Fence mode (Vulkan 1.1 fallback)
+///
+/// Uses a dedicated fence. `drop()` blocks until the fence signals.
+/// Avoid dropping from async executor worker threads.
+pub struct GpuFuture {
+    shared: Arc<SharedState>,
+    inner: FutureKind,
+    completed: bool,
+}
+
+
 impl GpuFuture {
-    /// Check whether the GPU work has completed without blocking.
+    /// Non-blocking completion check.
     pub fn is_complete(&self) -> Result<bool> {
         if self.completed {
             return Ok(true);
         }
-        let signaled = unsafe { self.shared.device.get_fence_status(self.fence)? };
-        Ok(signaled)
+        match &self.inner {
+            FutureKind::Timeline {
+                timeline,
+                target_value,
+                ..
+            } => {
+                let current = timeline.current_value()?;
+                Ok(current >= *target_value)
+            }
+            FutureKind::Fence { fence } => {
+                let signaled = unsafe { self.shared.device.get_fence_status(*fence)? };
+                Ok(signaled)
+            }
+        }
     }
 
-    /// Block until the GPU work completes.
+    /// Blocking wait.
     pub fn wait(&self) -> Result<()> {
         if self.completed {
             return Ok(());
         }
-        unsafe {
-            self.shared
-                .device
-                .wait_for_fences(&[self.fence], true, u64::MAX)?;
+        match &self.inner {
+            FutureKind::Timeline {
+                timeline,
+                target_value,
+                ..
+            } => {
+                timeline.wait_for_value(*target_value, u64::MAX)?;
+                Ok(())
+            }
+            FutureKind::Fence { fence } => {
+                unsafe {
+                    self.shared
+                        .device
+                        .wait_for_fences(&[*fence], true, u64::MAX)?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 
-    /// Block with a timeout. Returns `Ok(true)` if completed, `Ok(false)`
-    /// on timeout.
+    /// Blocking wait with timeout.
     pub fn wait_timeout(&self, timeout: Duration) -> Result<bool> {
         if self.completed {
             return Ok(true);
         }
         let nanos = timeout.as_nanos().min(u64::MAX as u128) as u64;
-        match unsafe {
-            self.shared
-                .device
-                .wait_for_fences(&[self.fence], true, nanos)
-        } {
-            Ok(()) => Ok(true),
-            Err(vk::Result::TIMEOUT) => Ok(false),
-            Err(e) => Err(Error::Vulkan(e)),
+        match &self.inner {
+            FutureKind::Timeline {
+                timeline,
+                target_value,
+                ..
+            } => timeline.wait_for_value(*target_value, nanos),
+            FutureKind::Fence { fence } => {
+                match unsafe {
+                    self.shared
+                        .device
+                        .wait_for_fences(&[*fence], true, nanos)
+                } {
+                    Ok(()) => Ok(true),
+                    Err(vk::Result::TIMEOUT) => Ok(false),
+                    Err(e) => Err(Error::Vulkan(e)),
+                }
+            }
         }
     }
 
-    /// Get the raw fence handle.
-    #[inline]
-    pub fn fence(&self) -> vk::Fence {
-        self.fence
+    /// Get the timeline target value (if timeline mode).
+    pub fn timeline_value(&self) -> Option<u64> {
+        match &self.inner {
+            FutureKind::Timeline { target_value, .. } => Some(*target_value),
+            _ => None,
+        }
+    }
+
+    /// Get the timeline semaphore (if timeline mode).
+    pub fn timeline_semaphore(&self) -> Option<vk::Semaphore> {
+        match &self.inner {
+            FutureKind::Timeline { timeline, .. } => Some(timeline.semaphore()),
+            _ => None,
+        }
+    }
+
+    /// Get the fence handle (if fence mode).
+    pub fn fence(&self) -> Option<vk::Fence> {
+        match &self.inner {
+            FutureKind::Fence { fence } => Some(*fence),
+            _ => None,
+        }
     }
 }
 
@@ -303,61 +408,50 @@ impl Future for GpuFuture {
             return Poll::Ready(Ok(()));
         }
 
-        // Check the watcher state first (if attached) for early completion
-        // detected by the background thread. We extract the result under
-        // the lock, then release the borrow on self.watched before mutating
-        // self.completed.
-        let watcher_result = self.watched.as_ref().and_then(|watched| {
-            let inner = watched.inner.lock().unwrap();
-            if inner.completed {
-                Some(inner.error)
-            } else {
-                None
-            }
-        });
-
-        if let Some(maybe_err) = watcher_result {
-            self.completed = true;
-            return match maybe_err {
-                Some(e) => Poll::Ready(Err(Error::Vulkan(e))),
-                None => Poll::Ready(Ok(())),
-            };
-        }
-
-        // Non-blocking fence check via Vulkan API.
-        match unsafe { self.shared.device.get_fence_status(self.fence) } {
-            Ok(true) => {
-                // Mark the watcher entry as completed so it gets pruned.
-                {
-                    if let Some(watched) = &self.watched {
-                        let mut inner = watched.inner.lock().unwrap();
-                        inner.completed = true;
+        match &self.inner {
+            FutureKind::Timeline {
+                timeline,
+                target_value,
+                watcher,
+            } => {
+                let current = match timeline.current_value() {
+                    Ok(v) => v,
+                    Err(e) => {
+                        self.completed = true;
+                        return Poll::Ready(Err(e));
                     }
+                };
+
+                if current >= *target_value {
+                    self.completed = true;
+                    return Poll::Ready(Ok(()));
                 }
-                // Now safe to mutate self - the immutable borrow above
-                // ended with the block.
-                self.completed = true;
-                Poll::Ready(Ok(()))
-            }
-            Ok(false) => {
-                // Fence not yet signaled.
-                if let Some(watched) = &self.watched {
-                    // Register the waker with the background thread.
-                    // The watcher will call waker.wake() when the fence
-                    // signals, so we do NOT re-schedule ourselves here.
-                    let mut inner = watched.inner.lock().unwrap();
-                    inner.waker = Some(cx.waker().clone());
+
+                // Register waker with the timeline watcher.
+                if let Some(w) = watcher {
+                    w.register(timeline.semaphore(), *target_value, cx.waker().clone());
                     Poll::Pending
                 } else {
-                    // No watcher attached - busy-wait fallback.
-                    // Immediately re-schedule so the executor polls again.
+                    // No watcher: busy-wait fallback.
                     cx.waker().wake_by_ref();
                     Poll::Pending
                 }
             }
-            Err(e) => {
-                self.completed = true;
-                Poll::Ready(Err(Error::Vulkan(e)))
+            FutureKind::Fence { fence } => {
+                match unsafe { self.shared.device.get_fence_status(*fence) } {
+                    Ok(true) => {
+                        self.completed = true;
+                        Poll::Ready(Ok(()))
+                    }
+                    Ok(false) => {
+                        cx.waker().wake_by_ref();
+                        Poll::Pending
+                    }
+                    Err(e) => {
+                        self.completed = true;
+                        Poll::Ready(Err(Error::Vulkan(e)))
+                    }
+                }
             }
         }
     }
@@ -365,26 +459,24 @@ impl Future for GpuFuture {
 
 impl Drop for GpuFuture {
     fn drop(&mut self) {
-        // Signal the watcher to stop touching this fence.
-        if let Some(watched) = &self.watched {
-            let mut inner = watched.inner.lock().unwrap();
-            inner.dropped = true;
-            // Release the lock BEFORE blocking on the fence so the watcher
-            // thread is not starved.
-            drop(inner);
-        }
-
-        if !self.completed {
-            unsafe {
-                let _ = self
-                    .shared
-                    .device
-                    .wait_for_fences(&[self.fence], true, u64::MAX);
+        match &self.inner {
+            FutureKind::Timeline { .. } => {
+                // No-op. Timeline value will be reached eventually.
+                // No resources to clean up.
             }
-        }
-
-        unsafe {
-            self.shared.device.destroy_fence(self.fence, None);
+            FutureKind::Fence { fence } => {
+                if !self.completed {
+                    unsafe {
+                        let _ = self
+                            .shared
+                            .device
+                            .wait_for_fences(&[*fence], true, u64::MAX);
+                    }
+                }
+                unsafe {
+                    self.shared.device.destroy_fence(*fence, None);
+                }
+            }
         }
     }
 }

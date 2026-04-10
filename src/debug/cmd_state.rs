@@ -131,6 +131,8 @@ pub struct ValidatedRecorder<'a> {
     history: Vec<HistoryEntry>,
     max_history: usize,
     on_error: StateErrorAction,
+    bound_graphics_pipeline: bool,
+    bound_compute_pipeline: bool,
 }
 
 impl<'a> ValidatedRecorder<'a> {
@@ -142,6 +144,8 @@ impl<'a> ValidatedRecorder<'a> {
             history: Vec::new(),
             max_history: 32,
             on_error: StateErrorAction::default(),
+            bound_graphics_pipeline: false,
+            bound_compute_pipeline: false,
         }
     }
 
@@ -254,6 +258,11 @@ impl<'a> ValidatedRecorder<'a> {
         if !self.check("bind_pipeline()", CommandCategory::Any) {
             return;
         }
+        match bind_point {
+            vk::PipelineBindPoint::GRAPHICS => self.bound_graphics_pipeline = true,
+            vk::PipelineBindPoint::COMPUTE => self.bound_compute_pipeline = true,
+            _ => {}
+        }
         self.record_history("bind_pipeline()");
         self.inner.bind_pipeline(bind_point, pipeline);
     }
@@ -318,6 +327,11 @@ impl<'a> ValidatedRecorder<'a> {
         ) {
             return;
         }
+        if !self.bound_graphics_pipeline {
+            let report = format_binding_error("draw", "graphics pipeline");
+            self.dispatch_error(&report);
+            return;
+        }
         self.record_history(&format!("draw({vertex_count}, ...)"));
         self.inner
             .draw(vertex_count, instance_count, first_vertex, first_instance);
@@ -338,6 +352,11 @@ impl<'a> ValidatedRecorder<'a> {
         ) {
             return;
         }
+        if !self.bound_graphics_pipeline {
+            let report = format_binding_error("draw_indexed", "graphics pipeline");
+            self.dispatch_error(&report);
+            return;
+        }
         self.record_history(&format!("draw_indexed({index_count}, ...)"));
         self.inner.draw_indexed(
             index_count,
@@ -350,10 +369,12 @@ impl<'a> ValidatedRecorder<'a> {
 
     /// Dispatch compute.
     pub fn dispatch(&mut self, gx: u32, gy: u32, gz: u32) {
-        if !self.check(
-            &format!("dispatch({gx}, {gy}, {gz})"),
-            CommandCategory::Dispatch,
-        ) {
+        if !self.check(&format!("dispatch({gx}, {gy}, {gz})"), CommandCategory::Dispatch) {
+            return;
+        }
+        if !self.bound_compute_pipeline {
+            let report = format_binding_error("dispatch", "compute pipeline");
+            self.dispatch_error(&report);
             return;
         }
         self.record_history(&format!("dispatch({gx}, {gy}, {gz})"));
@@ -584,6 +605,44 @@ fn format_state_error(
         _ => "check the Vulkan specification for valid command sequences",
     };
     diagnostic::write_help(&mut o, &s, help);
+
+    o
+}
+
+fn format_binding_error(command: &str, missing: &str) -> String {
+    let s = Style::detect();
+    let mut o = String::with_capacity(512);
+
+    diagnostic::write_header(
+        &mut o,
+        &s,
+        &Severity::Error,
+        "IGN-S002",
+        &format!("{command} called without bound {missing}"),
+    );
+    diagnostic::write_pipe_empty(&mut o, &s);
+    diagnostic::write_pipe(
+        &mut o,
+        &s,
+        &format!(
+            "command {} requires a {} to be bound",
+            s.bold_red(command),
+            s.bold(missing),
+        ),
+    );
+    diagnostic::write_pipe_empty(&mut o, &s);
+    diagnostic::write_help(
+        &mut o,
+        &s,
+        &format!(
+            "call bind_pipeline({}) before {command}",
+            if missing.contains("graphics") {
+                "GRAPHICS, pipeline"
+            } else {
+                "COMPUTE, pipeline"
+            }
+        ),
+    );
 
     o
 }

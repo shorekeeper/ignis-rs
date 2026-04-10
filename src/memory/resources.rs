@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use crate::allocator::{Allocation, Allocator};
+#[cfg(feature = "tracking")]
+use crate::tracking::deletion::{DeletionQueue, DeletionGuard};
+use super::allocator::{Allocation, Allocator};
 use crate::device::SharedState;
 use crate::error::{Error, Result};
 
@@ -275,6 +277,33 @@ impl Buffer {
         let info = vk::BufferDeviceAddressInfo::default().buffer(self.handle);
         unsafe { self.shared.device.get_buffer_device_address(&info) }
     }
+
+    /// Retire this buffer into a deletion queue for deferred destruction.
+    ///
+    /// The `guard` determines when it is safe to actually destroy the
+    /// buffer (e.g., after a timeline semaphore reaches a specific value).
+    ///
+    /// This consumes the buffer without calling Drop.
+    #[cfg(feature = "tracking")]
+    pub fn retire(self, dq: &DeletionQueue, guard: DeletionGuard) {
+        let handle = self.handle;
+        let allocator = Arc::clone(&self.allocator);
+        let allocation = self.allocation.clone();
+        std::mem::forget(self);
+        dq.retire_buffer_after(handle, Some((allocator, allocation)), guard);
+    }
+
+    /// Convert into raw parts without destroying. The caller assumes
+    /// responsibility for eventually destroying the buffer and freeing
+    /// the allocation.
+    #[cfg(feature = "tracking")]
+    pub fn into_raw(self) -> (vk::Buffer, Arc<dyn Allocator>, Allocation) {
+        let handle = self.handle;
+        let allocator = Arc::clone(&self.allocator);
+        let allocation = self.allocation.clone();
+        std::mem::forget(self);
+        (handle, allocator, allocation)
+    }
 }
 
 impl Drop for Buffer {
@@ -489,6 +518,26 @@ impl Image {
 
         let view = unsafe { self.shared.device.create_image_view(&ci, None)? };
         Ok(view)
+    }
+
+    /// Retire this image into a deletion queue.
+    #[cfg(feature = "tracking")]
+    pub fn retire(self, dq: &DeletionQueue, guard: DeletionGuard) {
+        let handle = self.handle;
+        let allocator = Arc::clone(&self.allocator);
+        let allocation = self.allocation.clone();
+        std::mem::forget(self);
+        dq.retire_image_after(handle, Some((allocator, allocation)), guard);
+    }
+
+    /// Convert into raw parts.
+    #[cfg(feature = "tracking")]
+    pub fn into_raw(self) -> (vk::Image, Arc<dyn Allocator>, Allocation) {
+        let handle = self.handle;
+        let allocator = Arc::clone(&self.allocator);
+        let allocation = self.allocation.clone();
+        std::mem::forget(self);
+        (handle, allocator, allocation)
     }
 }
 

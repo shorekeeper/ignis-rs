@@ -2,7 +2,7 @@
 //!
 //! This module defines [`SharedState`] - the internal representation shared
 //! across all ignis objects via `Arc` - and the two device creation paths:
-//! managed ([`create_managed_device`]) and external ([`create_external_device`]).
+//! managed and external.
 
 use std::ffi::{c_char, CStr, CString};
 
@@ -56,6 +56,8 @@ pub struct SharedState {
 
     /// Whether ignis owns (and should destroy) the instance and device.
     pub(crate) is_managed: bool,
+    /// Whether timeline semaphores are available (Vulkan 1.2+).
+    pub(crate) supports_timelines: bool,
 }
 
 // Compile-time assertion that SharedState is Send + Sync.
@@ -98,19 +100,8 @@ pub struct RayTracingProperties {
     pub max_shader_group_stride: u32,
 }
 
-/// Configuration for creating a managed Vulkan device.
-///
-/// Use the builder methods to customize, then pass to [`Ignis::managed`].
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use ignis::ManagedConfig;
-///
-/// let config = ManagedConfig::new("MyApp", ash::vk::API_VERSION_1_3)
-///     .enable_validation(true)
-///     .enable_raytracing(true);
-/// ```
+/// Use the builder methods to customize, then pass to
+/// [`crate::Ignis::managed`].
 pub struct ManagedConfig {
     /// Application name reported to the Vulkan driver.
     pub app_name: CString,
@@ -412,6 +403,13 @@ pub(crate) fn create_managed_device(
     // Step 6: Features chain.
     // We always enable Vulkan 1.2 features if the API version permits.
     let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::default();
+
+    // Timeline semaphores: mandatory in Vulkan 1.2 core.
+    // Enables O(1) GPU completion tracking instead of per-fence polling.
+    if config.vulkan_version >= vk::API_VERSION_1_2 {
+        vulkan12_features = vulkan12_features.timeline_semaphore(true);
+    }
+
     if config.raytracing {
         vulkan12_features = vulkan12_features
             .buffer_device_address(true)
@@ -463,6 +461,8 @@ pub(crate) fn create_managed_device(
     let memory_properties =
         unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
+    let supports_timelines = config.vulkan_version >= vk::API_VERSION_1_2;
+
     let shared = SharedState {
         entry: entry,
         instance,
@@ -475,7 +475,9 @@ pub(crate) fn create_managed_device(
         accel_struct_fn,
         rt_properties,
         is_managed: true,
+        supports_timelines,
     };
+
 
     Ok((shared, allocations))
 }
@@ -508,6 +510,11 @@ pub(crate) fn create_external_device(
             .get_physical_device_queue_family_properties(info.physical_device)
     };
 
+    let api_version = device_properties.api_version;
+    let supports_timelines = vk::api_version_major(api_version) > 1
+        || (vk::api_version_major(api_version) == 1
+            && vk::api_version_minor(api_version) >= 2);
+
     let (rt_pipeline_fn, accel_struct_fn, rt_properties) = if info.enable_raytracing {
         let rt_fn = ash::khr::ray_tracing_pipeline::Device::new(&info.instance, &info.device);
         let accel_fn = ash::khr::acceleration_structure::Device::new(&info.instance, &info.device);
@@ -531,6 +538,7 @@ pub(crate) fn create_external_device(
         accel_struct_fn,
         rt_properties,
         is_managed: false,
+        supports_timelines,
     };
 
     Ok((shared, allocations))

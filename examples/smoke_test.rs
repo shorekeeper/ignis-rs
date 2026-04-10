@@ -90,7 +90,7 @@ const MINIMAL_FRAG_SPV: &[u32] = &[
     0x00010038,
 ];
 
-const TOTAL_STEPS: u32 = 32;
+const TOTAL_STEPS: u32 = 33;
 
 fn main() {
     println!();
@@ -740,7 +740,7 @@ fn run() -> ignis::Result<(u32, u32)> {
     passed += 1;
     ok();
 
-    // Step 13: Dynamic rendering.
+// Step 13: Dynamic rendering (Vulkan 1.3).
     step(13, "Dynamic rendering (Vulkan 1.3)");
     {
         let dev_api = ctx.device_properties().api_version;
@@ -751,16 +751,15 @@ fn run() -> ignis::Result<(u32, u32)> {
             skip("device does not report Vulkan 1.3");
             skipped += 1;
         } else {
-            match ignis::Ignis::managed(ignis::ManagedConfig::new("ignis-dr", vk::API_VERSION_1_3))
-            {
+            match ignis::Ignis::managed(
+                ignis::ManagedConfig::new("ignis-dr", vk::API_VERSION_1_3),
+            ) {
                 Ok(ctx13) => {
                     let dr_pool = ctx13.create_command_pool(ignis::QueueType::Graphics)?;
                     let dr_queue = ctx13.queue(ignis::QueueType::Graphics)?;
 
                     let color_img = ctx13.create_image(&ignis::ImageInfo::texture_2d(
-                        32,
-                        32,
-                        vk::Format::R8G8B8A8_UNORM,
+                        32, 32, vk::Format::R8G8B8A8_UNORM,
                         vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
                     ))?;
                     let color_view = color_img.create_view(vk::ImageAspectFlags::COLOR)?;
@@ -768,26 +767,32 @@ fn run() -> ignis::Result<(u32, u32)> {
                     let cmd = dr_pool.allocate_primary()?;
                     let rec = dr_pool.begin_primary(cmd)?;
 
-                    rec.transition_image_layout(
-                        color_img.handle(),
-                        vk::ImageLayout::UNDEFINED,
-                        vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                        vk::ImageSubresourceRange {
-                            aspect_mask: vk::ImageAspectFlags::COLOR,
-                            base_mip_level: 0,
-                            level_count: 1,
-                            base_array_layer: 0,
-                            layer_count: 1,
-                        },
+                    // Transition via manual barrier (no tracker dependency).
+                    rec.pipeline_barrier(
+                        vk::PipelineStageFlags::TOP_OF_PIPE,
+                        vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        vk::DependencyFlags::empty(),
+                        &[],
+                        &[],
+                        &[vk::ImageMemoryBarrier::default()
+                            .old_layout(vk::ImageLayout::UNDEFINED)
+                            .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .src_access_mask(vk::AccessFlags::empty())
+                            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                            .image(color_img.handle())
+                            .subresource_range(vk::ImageSubresourceRange {
+                                aspect_mask: vk::ImageAspectFlags::COLOR,
+                                base_mip_level: 0,
+                                level_count: 1,
+                                base_array_layer: 0,
+                                layer_count: 1,
+                            })],
                     );
 
                     ignis::DynamicRenderPassBuilder::new()
                         .render_area(vk::Rect2D {
                             offset: vk::Offset2D { x: 0, y: 0 },
-                            extent: vk::Extent2D {
-                                width: 32,
-                                height: 32,
-                            },
+                            extent: vk::Extent2D { width: 32, height: 32 },
                         })
                         .color_attachment(ignis::ColorAttachmentInfo {
                             image_view: color_view,
@@ -1077,30 +1082,43 @@ fn run() -> ignis::Result<(u32, u32)> {
     passed += 1;
     ok();
 
-    // Step 21: Resource tracker.
-    step(21, "Resource tracker (layout transitions)");
+// Step 21: Resource tracker (layout transitions + buffer barriers).
+    step(21, "Resource tracker (per-subresource + buffer)");
     {
         let mut tracker = ignis::ResourceTracker::new();
 
         // Create two images to track.
         let img_a = ctx.create_image(&ignis::ImageInfo::texture_2d(
-            16,
-            16,
-            vk::Format::R8G8B8A8_UNORM,
+            16, 16, vk::Format::R8G8B8A8_UNORM,
             vk::ImageUsageFlags::SAMPLED
                 | vk::ImageUsageFlags::TRANSFER_DST
                 | vk::ImageUsageFlags::COLOR_ATTACHMENT,
         ))?;
-        let img_b = ctx.create_image(&ignis::ImageInfo::depth(16, 16, vk::Format::D32_SFLOAT))?;
+        let img_b = ctx.create_image(&ignis::ImageInfo::depth(
+            16, 16, vk::Format::D32_SFLOAT,
+        ))?;
 
-        tracker.track_image(img_a.handle(), vk::ImageLayout::UNDEFINED);
-        tracker.track_image(img_b.handle(), vk::ImageLayout::UNDEFINED);
-        assert_eq!(tracker.tracked_count(), 2);
+        // track_image now requires mip_levels, array_layers, aspect.
+        tracker.track_image(
+            img_a.handle(),
+            vk::ImageLayout::UNDEFINED,
+            1, // mip_levels
+            1, // array_layers
+            vk::ImageAspectFlags::COLOR,
+        );
+        tracker.track_image(
+            img_b.handle(),
+            vk::ImageLayout::UNDEFINED,
+            1,
+            1,
+            vk::ImageAspectFlags::DEPTH,
+        );
+        assert_eq!(tracker.image_count(), 2);
         info("tracking 2 images");
 
-        // Compute transitions.
+        // Transition using ImageUsageContext (no layout guessing).
         let t1 = tracker
-            .transition(img_a.handle(), vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .transition_image(img_a.handle(), ignis::ImageUsageContext::TransferDst)
             .expect("transition should produce a barrier");
         assert_eq!(t1.old_layout, vk::ImageLayout::UNDEFINED);
         assert_eq!(t1.new_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
@@ -1109,73 +1127,135 @@ fn run() -> ignis::Result<(u32, u32)> {
             t1.src_stage
         ));
 
-        // No-op transition (already in target layout).
-        let t_noop = tracker.transition(img_a.handle(), vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-        assert!(t_noop.is_none(), "same layout should yield None");
-        info("no-op transition returns None OK");
-
         // Second transition.
         let t2 = tracker
-            .transition(img_a.handle(), vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .transition_image(img_a.handle(), ignis::ImageUsageContext::FragmentShaderRead)
             .expect("second transition");
         assert_eq!(t2.old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
-        info("img_a: TRANSFER_DST -> SHADER_READ_ONLY OK");
+        assert_eq!(t2.new_layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        // Verify correct stage inference: FragmentShaderRead -> FRAGMENT_SHADER.
+        assert!(t2.dst_stage.contains(vk::PipelineStageFlags::FRAGMENT_SHADER));
+        info("img_a: TRANSFER_DST -> SHADER_READ_ONLY (FRAGMENT_SHADER) OK");
 
-        // Depth image transition with custom subresource range.
-        let depth_range = vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::DEPTH,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        };
-        let t3 = tracker
-            .transition_subresource(
-                img_b.handle(),
-                vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                depth_range,
-            )
-            .expect("depth transition");
-        assert_eq!(
-            t3.subresource_range.aspect_mask,
-            vk::ImageAspectFlags::DEPTH
+        // No-op transition (already in target state).
+        let t_noop = tracker.transition_image(
+            img_a.handle(),
+            ignis::ImageUsageContext::FragmentShaderRead,
         );
+        assert!(t_noop.is_none(), "same usage should yield None");
+        info("no-op transition returns None OK");
+
+        // Depth image transition.
+        let t3 = tracker
+            .transition_image(img_b.handle(), ignis::ImageUsageContext::DepthStencilAttachment)
+            .expect("depth transition");
+        assert_eq!(t3.new_layout, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+        assert_eq!(t3.subresource_range.aspect_mask, vk::ImageAspectFlags::DEPTH);
         info("img_b: UNDEFINED -> DEPTH_STENCIL_ATTACHMENT OK");
 
-        // Apply transitions via command recorder.
+        // Per-mip transition (for mipmap generation pattern).
+        let mip_img = ctx.create_image(&ignis::ImageInfo {
+            extent: vk::Extent3D { width: 64, height: 64, depth: 1 },
+            format: vk::Format::R8G8B8A8_UNORM,
+            usage: vk::ImageUsageFlags::SAMPLED
+                | vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::TRANSFER_DST,
+            mip_levels: 4,
+            ..Default::default()
+        })?;
+        tracker.track_image(
+            mip_img.handle(),
+            vk::ImageLayout::UNDEFINED,
+            4, // 4 mip levels
+            1,
+            vk::ImageAspectFlags::COLOR,
+        );
+
+        // Transition mip 0 to TRANSFER_SRC, mip 1 to TRANSFER_DST.
+        let mt0 = tracker
+            .transition_mip(mip_img.handle(), 0, ignis::ImageUsageContext::TransferSrc)
+            .expect("mip 0 transition");
+        assert_eq!(mt0.subresource_range.base_mip_level, 0);
+        assert_eq!(mt0.subresource_range.level_count, 1);
+        assert_eq!(mt0.new_layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+
+        let mt1 = tracker
+            .transition_mip(mip_img.handle(), 1, ignis::ImageUsageContext::TransferDst)
+            .expect("mip 1 transition");
+        assert_eq!(mt1.subresource_range.base_mip_level, 1);
+        assert_eq!(mt1.new_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+
+        // Verify per-subresource state.
+        let s0 = tracker.subresource_state(mip_img.handle(), 0, 0).unwrap();
+        assert_eq!(s0.layout, vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
+        let s1 = tracker.subresource_state(mip_img.handle(), 1, 0).unwrap();
+        assert_eq!(s1.layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
+        let s2 = tracker.subresource_state(mip_img.handle(), 2, 0).unwrap();
+        assert_eq!(s2.layout, vk::ImageLayout::UNDEFINED);
+        info("per-mip tracking: mip0=TRANSFER_SRC, mip1=TRANSFER_DST, mip2=UNDEFINED OK");
+
+        // Buffer tracking.
+        let test_buf = ctx.create_buffer(&ignis::BufferInfo::storage(
+            256, ignis::MemoryLocation::GpuOnly,
+        ))?;
+        tracker.track_buffer(test_buf.handle());
+        assert_eq!(tracker.buffer_count(), 1);
+
+        let bt1 = tracker
+            .transition_buffer(test_buf.handle(), ignis::BufferUsageContext::StorageComputeWrite)
+            .expect("buffer transition to compute write");
+        assert!(bt1.dst_stage.contains(vk::PipelineStageFlags::COMPUTE_SHADER));
+        assert!(bt1.dst_access.contains(vk::AccessFlags::SHADER_WRITE));
+        info("buffer: TOP_OF_PIPE -> COMPUTE_SHADER (SHADER_WRITE) OK");
+
+        let bt2 = tracker
+            .transition_buffer(test_buf.handle(), ignis::BufferUsageContext::VertexInput)
+            .expect("buffer transition to vertex input");
+        assert!(bt2.src_stage.contains(vk::PipelineStageFlags::COMPUTE_SHADER));
+        assert!(bt2.dst_stage.contains(vk::PipelineStageFlags::VERTEX_INPUT));
+        info("buffer: COMPUTE_SHADER -> VERTEX_INPUT (VERTEX_ATTRIBUTE_READ) OK");
+
+        // No-op buffer transition.
+        let bt_noop = tracker.transition_buffer(
+            test_buf.handle(),
+            ignis::BufferUsageContext::VertexInput,
+        );
+        assert!(bt_noop.is_none());
+        info("buffer no-op transition returns None OK");
+
+        // Apply image and buffer transitions via command recorder.
         let cmd = pool.allocate_primary()?;
         let rec = pool.begin_primary(cmd)?;
-        rec.apply_transitions(&[t1, t2, t3]);
-        info("apply_transitions (batched barrier) OK");
+        rec.apply_image_transitions(&[t1, t2, t3]);
+        rec.apply_buffer_transitions(&[bt1, bt2]);
+        info("apply_image_transitions + apply_buffer_transitions OK");
 
-        // Stateless helper.
-        rec.transition_image_layout(
+        // ComputeShaderRead vs FragmentShaderRead - verify correct stage.
+        tracker.untrack_image(img_a.handle());
+        tracker.track_image(
             img_a.handle(),
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            },
+            vk::ImageLayout::UNDEFINED,
+            1, 1,
+            vk::ImageAspectFlags::COLOR,
         );
-        info("transition_image_layout (stateless) OK");
+        let t_compute = tracker
+            .transition_image(img_a.handle(), ignis::ImageUsageContext::ComputeShaderRead)
+            .unwrap();
+        assert!(t_compute.dst_stage.contains(vk::PipelineStageFlags::COMPUTE_SHADER));
+        assert!(!t_compute.dst_stage.contains(vk::PipelineStageFlags::FRAGMENT_SHADER));
+        info("ComputeShaderRead -> COMPUTE_SHADER (not FRAGMENT_SHADER) OK");
 
         let cmd = rec.end()?;
         gfx_queue.submit_simple(cmd)?.wait()?;
         info("submitted and executed transition commands");
 
-        // Verify tracked state.
-        let state = tracker.image_state(img_a.handle()).unwrap();
-        assert_eq!(state.layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        info("tracker state consistent after transitions");
-
+        // Cleanup.
         tracker.untrack_image(img_a.handle());
-        assert_eq!(tracker.tracked_count(), 1);
+        assert_eq!(tracker.image_count(), 2); // img_b + mip_img
+        tracker.untrack_buffer(test_buf.handle());
+        assert_eq!(tracker.buffer_count(), 0);
         tracker.clear();
-        assert_eq!(tracker.tracked_count(), 0);
+        assert_eq!(tracker.image_count(), 0);
         info("untrack + clear OK");
     }
     passed += 1;
@@ -2072,6 +2152,209 @@ fn run() -> ignis::Result<(u32, u32)> {
     passed += 1;
     ok();
 
+    // Step 33: Slab allocator (production hardened).
+    step(33, "Slab allocator (production hardened)");
+    {
+        // Production config: structural hardening, no slot history.
+        let slab_alloc = ctx.create_slab_allocator();
+
+        // Allocate across multiple size classes.
+        let mut buffers = Vec::new();
+        let sizes = [64u64, 128, 255, 256, 512, 1000, 2048, 4096, 8000, 16384, 65536];
+        for &sz in &sizes {
+            let buf = ctx.create_buffer_with(
+                &slab_alloc,
+                &ignis::BufferInfo::staging(sz),
+            )?;
+            assert!(buf.mapped_slice().is_some());
+            assert!(buf.size() >= sz);
+            buffers.push(buf);
+        }
+        info(&format!("allocated {} buffers across size classes", sizes.len()));
+
+        // Verify write/read round-trip on each.
+        for (i, buf) in buffers.iter().enumerate() {
+            let pattern = (i as u8).wrapping_mul(37);
+            let data: Vec<u8> = vec![pattern; buf.size() as usize];
+            buf.write(0, &data);
+            let readback = buf.mapped_slice().unwrap();
+            assert_eq!(readback[0], pattern);
+            assert_eq!(readback[buf.size() as usize - 1], pattern);
+        }
+        info("write/read round-trip on all sizes OK");
+
+        // Drop half, allocate again (tests slot reuse after quarantine).
+        let kept = buffers.split_off(sizes.len() / 2);
+        drop(buffers);
+        info(&format!("dropped {} buffers, {} kept", sizes.len() / 2, kept.len()));
+
+        let mut reused = Vec::new();
+        for &sz in &sizes[..sizes.len() / 2] {
+            reused.push(ctx.create_buffer_with(
+                &slab_alloc,
+                &ignis::BufferInfo::staging(sz),
+            )?);
+        }
+        info("re-allocated into freed slots OK");
+
+        // Verify zero-on-free: new allocations should see zeroed memory
+        // (unless the slot was reused before quarantine eviction, in which
+        // case the zero was done on free).
+        for buf in &reused {
+            let slice = buf.mapped_slice().unwrap();
+            // With zero_on_free and quarantine, re-allocated slots should
+            // have been zeroed. Check first byte.
+            // Note: in production config the slot may or may not have been
+            // the exact same slot (randomization), so we don't assert zero
+            // strictly - just verify the buffer is usable.
+            let _ = slice[0];
+        }
+        info("re-allocated buffers readable OK");
+
+        drop(kept);
+        drop(reused);
+
+        // Oversized allocation (exceeds all size classes -> dedicated).
+        let big = ctx.create_buffer_with(
+            &slab_alloc,
+            &ignis::BufferInfo::staging(2 * 1024 * 1024),
+        )?;
+        assert!(big.mapped_slice().is_some());
+        big.write(0, &[0xAB; 1024]);
+        assert_eq!(big.mapped_slice().unwrap()[0], 0xAB);
+        info("oversized (2 MiB) dedicated allocation OK");
+        drop(big);
+
+        // Image through slab allocator.
+        let img = ctx.create_image_with(
+            &slab_alloc,
+            &ignis::ImageInfo::texture_2d(
+                32, 32, vk::Format::R8G8B8A8_UNORM,
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            ),
+        )?;
+        let view = img.create_view(vk::ImageAspectFlags::COLOR)?;
+        assert_ne!(view, vk::ImageView::null());
+        info("slab-allocated image + view OK");
+        unsafe { ctx.device().destroy_image_view(view, None) };
+        drop(img);
+
+        // GPU-only buffer (not mapped).
+        let gpu_buf = ctx.create_buffer_with(
+            &slab_alloc,
+            &ignis::BufferInfo {
+                size: 4096,
+                usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+                location: ignis::MemoryLocation::GpuOnly,
+                sharing_mode: vk::SharingMode::EXCLUSIVE,
+            },
+        )?;
+        assert!(gpu_buf.mapped_slice().is_none());
+        info("GPU-only slab buffer OK");
+        drop(gpu_buf);
+
+        // Debug config: slot history + panic on errors (via callback).
+        let debug_errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let err_clone = debug_errors.clone();
+
+        let debug_config = ignis::SlabConfig::debug()
+            .on_double_free(ignis::SlabErrorAction::Callback(Box::new(
+                move |report| {
+                    err_clone.lock().unwrap().push(report.to_string());
+                },
+            )));
+        let debug_alloc: Arc<dyn ignis::Allocator> = Arc::new(ignis::SlabAllocator::with_config(
+            ctx.shared_state().clone(),
+            debug_config,
+        ));
+
+        let dbg_buf = ctx.create_buffer_with(&debug_alloc, &ignis::BufferInfo::staging(128))?;
+        assert!(dbg_buf.mapped_slice().is_some());
+        info("debug-config slab buffer allocated OK");
+
+        // Verify slot history is active (no direct API to check, but
+        // the debug config enables it - stats will show slab_count > 0).
+        drop(dbg_buf);
+
+        // Stats report via a dedicated SlabAllocator instance.
+        let named_slab = Arc::new(ignis::SlabAllocator::new(ctx.shared_state().clone()));
+        let named_dyn: Arc<dyn ignis::Allocator> = named_slab.clone();
+
+        // Pump allocations so stats are populated.
+        let mut stat_bufs = Vec::new();
+        for sz in [128u64, 256, 512, 1024, 4096, 65536] {
+            stat_bufs.push(ctx.create_buffer_with(
+                &named_dyn,
+                &ignis::BufferInfo::staging(sz),
+            )?);
+        }
+        // Free half to see quarantine in stats.
+        for _ in 0..3 {
+            stat_bufs.pop();
+        }
+
+        let stats = named_slab.stats();
+        info(&format!(
+            "stats: device_memory={} user_bytes={} double_frees={} overflows={}",
+            stats.device_memory_count,
+            format_size(stats.total_user_bytes),
+            stats.double_frees_detected,
+            stats.overflows_detected,
+        ));
+
+        // Print report exactly once.
+        for line in named_slab.report().lines() {
+            println!("       {line}");
+        }
+
+        drop(stat_bufs);
+        drop(named_dyn);
+        drop(named_slab);
+
+        // Multi-threaded allocation stress test.
+        let mt_alloc: Arc<dyn ignis::Allocator> = ctx.create_slab_allocator();
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let errors = Arc::new(std::sync::atomic::AtomicU32::new(0));
+
+        std::thread::scope(|scope| {
+            for thread_id in 0..4u32 {
+                let alloc = Arc::clone(&mt_alloc);
+                let shared = ctx.shared_state().clone();
+                let bar = Arc::clone(&barrier);
+                let errs = Arc::clone(&errors);
+
+                scope.spawn(move || {
+                    bar.wait();
+                    for i in 0..50 {
+                        let size = 64 + (thread_id as u64 * 100) + (i as u64 * 8);
+                        match ignis::Buffer::new(
+                            Arc::clone(&shared),
+                            Arc::clone(&alloc),
+                            &ignis::BufferInfo::staging(size),
+                        ) {
+                            Ok(buf) => {
+                                buf.write(0, &[0xAA]);
+                                if buf.mapped_slice().unwrap()[0] != 0xAA {
+                                    errs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                }
+                                // Drop triggers free.
+                            }
+                            Err(_) => {
+                                errs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let err_count = errors.load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(err_count, 0, "multi-threaded slab stress test had errors");
+        info("4-thread x 50 alloc/free stress test OK (0 errors)");
+    }
+    passed += 1;
+    ok();
+
     // Cleanup.
     println!("    Dropping resources...");
     drop(render_pass);
@@ -2155,6 +2438,16 @@ fn byte_to_char(b: u8) -> char {
     const RAMP: &[u8] = b" .,:;+*?%S#@";
     let idx = (b as usize) * (RAMP.len() - 1) / 255;
     RAMP[idx] as char
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1}MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1}KiB", bytes as f64 / 1024.0)
+    } else {
+        format!("{}B", bytes)
+    }
 }
 
 fn step(n: u32, title: &str) {

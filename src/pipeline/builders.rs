@@ -1,9 +1,9 @@
 //! Pipeline builders for graphics, compute, and ray tracing pipelines.
 //!
 //! Each builder collects configuration incrementally and constructs the
-//! Vulkan pipeline in [`build`]. Shader module references are stored as
-//! raw `VkShaderModule` handles; the caller is responsible for keeping
-//! the modules alive until the pipeline is built.
+//! Vulkan pipeline via a final `build()` call. Shader module references
+//! are stored as raw `VkShaderModule` handles; the caller is responsible
+//! for keeping the modules alive until the pipeline is built.
 //!
 //! # Ray Tracing
 //!

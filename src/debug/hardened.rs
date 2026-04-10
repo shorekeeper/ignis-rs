@@ -97,10 +97,10 @@ use std::time::Instant;
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::allocator::{align_up, Allocation, Allocator};
+use crate::memory::allocator::{align_up, Allocation, Allocator};
 use crate::device::SharedState;
 use crate::error::Result;
-use crate::memory::MemoryLocation;
+use crate::memory::resources::MemoryLocation;
 
 /// Minimum guard size in bytes. Must fit at least one canary word.
 const MIN_GUARD_SIZE: u64 = 8;
@@ -993,6 +993,7 @@ impl Allocator for HardenedAllocator {
             offset: inner_alloc.offset + front_pad,
             size: user_size,
             mapped_ptr: user_mapped_ptr,
+            memory_type_index: inner_alloc.memory_type_index,
         };
 
         // Store metadata.
@@ -1203,6 +1204,7 @@ mod tests {
                 offset: 0,
                 size: requirements.size,
                 mapped_ptr: Some(ptr),
+                memory_type_index: 0,
             })
         }
 

@@ -1,15 +1,25 @@
 [package]
 name = "ignis"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.70"
 description = "Vulkan queue orchestration, memory management, and GPU debugging toolkit built on ash"
-license = "WTFPL"
+license = "i dont give a fuck license"
 keywords = ["vulkan", "graphics", "async", "raytracing", "gpu"]
-categories = ["graphics", "rendering", "development-tools::debugging"]
+categories = ["graphics", "rendering"]
 
 [dependencies]
 ash = "0.38"
+
+[features]
+default = []
+swapchain = []
+slab-allocator = []
+interop = []
+tracking = []
+descriptors = []
+debug-tools = []
+full = ["swapchain", "slab-allocator", "interop", "tracking", "descriptors", "debug-tools"]
 
 [[example]]
 name = "smoke_test"
