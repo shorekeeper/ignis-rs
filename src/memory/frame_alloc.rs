@@ -29,10 +29,10 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use crate::device::SharedState;
-use crate::error::{Error, Result};
 use super::allocator::{Allocation, Allocator};
 use super::resources::MemoryLocation;
+use crate::device::SharedState;
+use crate::error::{Error, Result};
 
 /// A single frame's bump-allocated buffer.
 struct FrameBuffer {

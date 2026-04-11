@@ -430,11 +430,9 @@ impl DiagnosticContext {
     pub fn from_shared(shared: &crate::device::SharedState) -> Self {
         let props = &shared.device_properties;
 
-        let gpu_name = unsafe {
-            std::ffi::CStr::from_ptr(props.device_name.as_ptr())
-        }
-        .to_string_lossy()
-        .into_owned();
+        let gpu_name = unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
+            .to_string_lossy()
+            .into_owned();
 
         let api_version = format!(
             "{}.{}.{}",
@@ -632,10 +630,12 @@ pub(crate) fn session_summary() -> String {
         let err_frac = errors as f64 / total as f64;
         let warn_frac = warnings as f64 / total as f64;
 
-        let bar_width:usize = 50;
+        let bar_width: usize = 50;
         let err_chars = (err_frac * bar_width as f64).round() as usize;
         let warn_chars = (warn_frac * bar_width as f64).round() as usize;
-        let info_chars = bar_width.saturating_sub(err_chars).saturating_sub(warn_chars);
+        let info_chars = bar_width
+            .saturating_sub(err_chars)
+            .saturating_sub(warn_chars);
 
         let bar = format!(
             "[{}{}{}]",
@@ -729,7 +729,7 @@ fn code_to_severity_hint(code: &str, s: &Style) -> String {
         "IGN-H006" => return s.bold_cyan("INFO "),
         "IGN-S012" => return s.bold_cyan("INFO "),
         "IGN-J002" => return s.bold_cyan("INFO "),
-        "IGN-SUM"  => return s.bold_cyan("INFO "),
+        "IGN-SUM" => return s.bold_cyan("INFO "),
         _ => {}
     }
 
@@ -744,13 +744,15 @@ fn code_to_severity_hint(code: &str, s: &Style) -> String {
         || code.starts_with("IGN-P")    // pipeline audit
         || code.starts_with("IGN-T")    // thread audit
         || code.starts_with("IGN-W")    // hang detector
-        || code.starts_with("IGN-J001") // journal error dump
+        || code.starts_with("IGN-J001")
+    // journal error dump
     {
         s.bold_red(" ERR ")
     } else if code.starts_with("IGN-M")    // budget monitor
         || code.starts_with("IGN-O")       // barrier optimizer
         || code.starts_with("IGN-L")       // lifetime leaks
-        || code.starts_with("IGN-Q")       // deletion queue
+        || code.starts_with("IGN-Q")
+    // deletion queue
     {
         s.bold_yellow("WARN ")
     } else {
@@ -1082,7 +1084,7 @@ pub(crate) fn write_backtrace(o: &mut String, s: &Style, max_frames: usize) {
                 && !trimmed.contains("lang_start")
                 && !trimmed.contains("BaseThreadInitThunk") // NEW: Windows CRT
                 && !trimmed.contains("RtlUserThreadStart")  // NEW: Windows CRT
-                && !trimmed.contains("__scrt_common_main")  // NEW: Windows CRT
+                && !trimmed.contains("__scrt_common_main") // NEW: Windows CRT
         })
         .take(max_frames)
         .collect();
@@ -1156,9 +1158,7 @@ pub(crate) fn write_repeat_notice(o: &mut String, s: &Style, code: &str, count: 
             write_pipe_raw(
                 o,
                 s,
-                &s.bold_yellow(
-                    "  Consider fixing the root cause to reduce diagnostic noise",
-                ),
+                &s.bold_yellow("  Consider fixing the root cause to reduce diagnostic noise"),
             );
         }
         write_pipe_empty(o, s);
@@ -1357,7 +1357,11 @@ pub(crate) fn render_bar(fraction: f64, width: usize, label: Option<&str>, s: &S
 
     let pct = format!("{:.1}%", fraction * 100.0);
 
-    let bar = format!("[{colored_fill}{}] {}", s.dim(&empty_str), s.bright_white(&pct));
+    let bar = format!(
+        "[{colored_fill}{}] {}",
+        s.dim(&empty_str),
+        s.bright_white(&pct)
+    );
 
     match label {
         Some(l) => format!("{bar} {}", s.bright_white(l)),
@@ -1498,11 +1502,7 @@ pub(crate) fn hex_dump(data: &[u8], base_offset: usize, max_rows: usize) -> Stri
     }
 
     if data.len() > rows * bytes_per_row {
-        let _ = write!(
-            o,
-            "\n... {} more bytes",
-            data.len() - rows * bytes_per_row
-        );
+        let _ = write!(o, "\n... {} more bytes", data.len() - rows * bytes_per_row);
     }
 
     o
@@ -2184,7 +2184,11 @@ pub(crate) fn format_guard_report(r: &GuardReport) -> String {
     write_section(&mut o, &s, "Corruption Analysis");
 
     let pattern = analyze_corruption_pattern(&r.hex_actual, &r.hex_expected);
-    write_pipe(&mut o, &s, &format!("pattern: {}", s.bright_white(&pattern)));
+    write_pipe(
+        &mut o,
+        &s,
+        &format!("pattern: {}", s.bright_white(&pattern)),
+    );
 
     let pct = (r.total_corrupted as f64 / r.guard_size as f64) * 100.0;
     write_pipe(
@@ -2269,7 +2273,12 @@ pub(crate) fn format_double_free(memory_handle: u64, offset: u64, size: u64) -> 
 
     write_separator(&mut o, &s);
     write_section(&mut o, &s, "Probable Causes");
-    write_numbered(&mut o, &s, 1, "Double free — the same buffer/image was dropped twice");
+    write_numbered(
+        &mut o,
+        &s,
+        1,
+        "Double free — the same buffer/image was dropped twice",
+    );
     write_numbered(
         &mut o,
         &s,

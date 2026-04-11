@@ -836,10 +836,16 @@ impl RayTracingPipeline {
         };
 
         // Compute region sizes (aligned to base_alignment).
-        let raygen_size = align_up(u64::from(raygen_count) * handle_size_aligned, base_alignment);
+        let raygen_size = align_up(
+            u64::from(raygen_count) * handle_size_aligned,
+            base_alignment,
+        );
         let miss_size = align_up(u64::from(miss_count) * handle_size_aligned, base_alignment);
         let hit_size = align_up(u64::from(hit_count) * handle_size_aligned, base_alignment);
-        let callable_size = align_up(u64::from(callable_count) * handle_size_aligned, base_alignment);
+        let callable_size = align_up(
+            u64::from(callable_count) * handle_size_aligned,
+            base_alignment,
+        );
 
         let total_size = raygen_size + miss_size + hit_size + callable_size;
 

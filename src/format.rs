@@ -104,9 +104,9 @@ pub fn format_byte_size(format: vk::Format) -> Option<u32> {
         | vk::Format::R64_SFLOAT => Some(8),
 
         // 12-byte formats.
-        vk::Format::R32G32B32_UINT
-        | vk::Format::R32G32B32_SINT
-        | vk::Format::R32G32B32_SFLOAT => Some(12),
+        vk::Format::R32G32B32_UINT | vk::Format::R32G32B32_SINT | vk::Format::R32G32B32_SFLOAT => {
+            Some(12)
+        }
 
         // 16-byte formats.
         vk::Format::R32G32B32A32_UINT

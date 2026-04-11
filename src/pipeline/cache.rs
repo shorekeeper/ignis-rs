@@ -81,9 +81,7 @@ impl PipelineCache {
 impl Drop for PipelineCache {
     fn drop(&mut self) {
         unsafe {
-            self.shared
-                .device
-                .destroy_pipeline_cache(self.handle, None);
+            self.shared.device.destroy_pipeline_cache(self.handle, None);
         }
     }
 }

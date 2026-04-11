@@ -105,7 +105,6 @@ pub enum StateErrorAction {
     Callback(Box<dyn Fn(&str) + Send + Sync>),
 }
 
-
 impl std::fmt::Debug for StateErrorAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -366,7 +365,10 @@ impl<'a> ValidatedRecorder<'a> {
 
     /// Dispatch compute.
     pub fn dispatch(&mut self, gx: u32, gy: u32, gz: u32) {
-        if !self.check(&format!("dispatch({gx}, {gy}, {gz})"), CommandCategory::Dispatch) {
+        if !self.check(
+            &format!("dispatch({gx}, {gy}, {gz})"),
+            CommandCategory::Dispatch,
+        ) {
             return;
         }
         if !self.bound_compute_pipeline {
@@ -650,46 +652,71 @@ fn format_state_error(
     // ── Visual state machine diagram ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Command Buffer State Machine");
-    diagnostic::write_pipe_raw(&mut o, &s, &format!(
-        "  {} ─begin─→ {} ─begin_rp─→ {}",
-        s.dim("[Initial]"),
-        s.bold_green("[Recording]"),
-        s.bold_cyan("[InRenderPass]"),
-    ));
-    diagnostic::write_pipe_raw(&mut o, &s, &format!(
-        "  {}             {} ←─end_rp──┘",
-        "               ",
-        s.bold_green("[Recording]"),
-    ));
-    diagnostic::write_pipe_raw(&mut o, &s, &format!(
-        "  {} ─begin─→ {} ─begin_dr─→ {}",
-        s.dim("[Initial]"),
-        s.bold_green("[Recording]"),
-        s.bold_cyan("[DynRendering]"),
-    ));
-    diagnostic::write_pipe_raw(&mut o, &s, &format!(
-        "  {}             {} ←─end_dr──┘",
-        "               ",
-        s.bold_green("[Recording]"),
-    ));
-    diagnostic::write_pipe_raw(&mut o, &s, &format!(
-        "  {}             {} ──end──→ {}",
-        "               ",
-        s.bold_green("[Recording]"),
-        s.dim("[Ended]"),
-    ));
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &format!(
+            "  {} ─begin─→ {} ─begin_rp─→ {}",
+            s.dim("[Initial]"),
+            s.bold_green("[Recording]"),
+            s.bold_cyan("[InRenderPass]"),
+        ),
+    );
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &format!(
+            "  {}             {} ←─end_rp──┘",
+            "               ",
+            s.bold_green("[Recording]"),
+        ),
+    );
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &format!(
+            "  {} ─begin─→ {} ─begin_dr─→ {}",
+            s.dim("[Initial]"),
+            s.bold_green("[Recording]"),
+            s.bold_cyan("[DynRendering]"),
+        ),
+    );
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &format!(
+            "  {}             {} ←─end_dr──┘",
+            "               ",
+            s.bold_green("[Recording]"),
+        ),
+    );
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &format!(
+            "  {}             {} ──end──→ {}",
+            "               ",
+            s.bold_green("[Recording]"),
+            s.dim("[Ended]"),
+        ),
+    );
     diagnostic::write_pipe_empty(&mut o, &s);
 
     // Highlight current position
-    diagnostic::write_pipe(&mut o, &s, &format!(
-        "you are in:  {}",
-        s.bold_red(&current_state.to_string())
-    ));
-    diagnostic::write_pipe(&mut o, &s, &format!(
-        "you called:  {} (requires: {})",
-        s.bold_red(command),
-        s.bold_green(expected)
-    ));
+    diagnostic::write_pipe(
+        &mut o,
+        &s,
+        &format!("you are in:  {}", s.bold_red(&current_state.to_string())),
+    );
+    diagnostic::write_pipe(
+        &mut o,
+        &s,
+        &format!(
+            "you called:  {} (requires: {})",
+            s.bold_red(command),
+            s.bold_green(expected)
+        ),
+    );
 
     // ── Command recording history ──
     if !history.is_empty() {
@@ -713,12 +740,8 @@ fn format_state_error(
             let idx = start + i;
             let state_color = match &entry.state_after {
                 RecordingState::Recording => s.green(&entry.state_after.to_string()),
-                RecordingState::InRenderPass { .. } => {
-                    s.bold_cyan(&entry.state_after.to_string())
-                }
-                RecordingState::InDynamicRendering => {
-                    s.bold_cyan(&entry.state_after.to_string())
-                }
+                RecordingState::InRenderPass { .. } => s.bold_cyan(&entry.state_after.to_string()),
+                RecordingState::InDynamicRendering => s.bold_cyan(&entry.state_after.to_string()),
                 RecordingState::Ended => s.dim(&entry.state_after.to_string()),
             };
 
@@ -777,8 +800,10 @@ fn format_state_error(
              cannot nest render passes or end one that was never started\n\
              use ValidatedRecorder to catch these errors at record time"
         }
-        _ => "check the Vulkan specification §6.1 for valid command sequences\n\
-              use ValidatedRecorder::state() to inspect current state",
+        _ => {
+            "check the Vulkan specification §6.1 for valid command sequences\n\
+              use ValidatedRecorder::state() to inspect current state"
+        }
     };
     diagnostic::write_help(&mut o, &s, help);
 

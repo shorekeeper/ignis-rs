@@ -40,10 +40,10 @@ use std::sync::Arc;
 
 use ash::vk;
 
-use crate::device::SharedState;
-use crate::error::{Error, Result};
 use super::allocator::{Allocation, Allocator};
 use super::resources::MemoryLocation;
+use crate::device::SharedState;
+use crate::error::{Error, Result};
 
 /// A region within the staging ring containing uploaded data.
 #[derive(Debug, Clone, Copy)]
@@ -156,9 +156,7 @@ impl StagingRing {
         let aligned_cursor = (frame.cursor + 15) & !15;
 
         if aligned_cursor + size > frame.capacity {
-            return Err(Error::InvalidConfig(
-                "staging ring frame capacity exceeded",
-            ));
+            return Err(Error::InvalidConfig("staging ring frame capacity exceeded"));
         }
 
         unsafe {

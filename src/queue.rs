@@ -21,9 +21,9 @@ use ash::vk;
 
 use crate::device::SharedState;
 use crate::error::{Error, Result};
+use crate::tracking::timeline::{QueueTimeline, TimelineWatcher};
 use crate::tracking::watcher::FenceWatcher;
 use crate::QueueType;
-use crate::tracking::timeline::{QueueTimeline, TimelineWatcher};
 
 /// A thread-safe asynchronous Vulkan queue.
 pub struct AsyncQueue {
@@ -301,7 +301,6 @@ pub struct GpuFuture {
     completed: bool,
 }
 
-
 impl GpuFuture {
     /// Non-blocking completion check.
     pub fn is_complete(&self) -> Result<bool> {
@@ -362,11 +361,7 @@ impl GpuFuture {
                 ..
             } => timeline.wait_for_value(*target_value, nanos),
             FutureKind::Fence { fence } => {
-                match unsafe {
-                    self.shared
-                        .device
-                        .wait_for_fences(&[*fence], true, nanos)
-                } {
+                match unsafe { self.shared.device.wait_for_fences(&[*fence], true, nanos) } {
                     Ok(()) => Ok(true),
                     Err(vk::Result::TIMEOUT) => Ok(false),
                     Err(e) => Err(Error::Vulkan(e)),

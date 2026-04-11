@@ -87,27 +87,16 @@ use ash::vk;
 use ash::vk::Handle;
 
 use super::allocator::{Allocation, Allocator};
+use super::resources::MemoryLocation;
 use crate::device::SharedState;
 use crate::diagnostic::{self, Severity, Style};
 use crate::error::{Error, Result};
-use super::resources::MemoryLocation;
 
 /// Size classes in bytes. Each is a power of two.
 /// Allocations are rounded up to the next size class.
 /// Anything above the largest class gets a dedicated `VkDeviceMemory`.
 const SIZE_CLASSES: &[u64] = &[
-    256,
-    512,
-    1_024,
-    2_048,
-    4_096,
-    8_192,
-    16_384,
-    32_768,
-    65_536,
-    131_072,
-    262_144,
-    524_288,
+    256, 512, 1_024, 2_048, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144, 524_288,
     1_048_576,
 ];
 
@@ -316,7 +305,9 @@ struct SlotHistory {
 impl SlotHistory {
     fn new(slot_count: u32, ring_cap: usize) -> Self {
         Self {
-            events: (0..slot_count).map(|_| Vec::with_capacity(ring_cap)).collect(),
+            events: (0..slot_count)
+                .map(|_| Vec::with_capacity(ring_cap))
+                .collect(),
             ring_cap,
         }
     }
@@ -502,11 +493,7 @@ impl Slab {
     }
 
     /// Allocate a slot. Returns (`slot_index`, `byte_offset_in_slab`).
-    fn allocate_slot(
-        &mut self,
-        user_size: u64,
-        right_align: bool,
-    ) -> Option<(u32, u64)> {
+    fn allocate_slot(&mut self, user_size: u64, right_align: bool) -> Option<(u32, u64)> {
         let slot = self.find_random_free_slot()?;
         self.set_allocated(slot);
         self.free_count -= 1;
@@ -543,11 +530,7 @@ impl Slab {
             if let Some(base) = self.mapped_base {
                 let slot_base = u64::from(slot) * self.slot_size;
                 unsafe {
-                    std::ptr::write_bytes(
-                        base.add(slot_base as usize),
-                        0,
-                        self.slot_size as usize,
-                    );
+                    std::ptr::write_bytes(base.add(slot_base as usize), 0, self.slot_size as usize);
                 }
             }
         }
@@ -826,8 +809,7 @@ impl Allocator for SlabAllocator {
             location,
         )?;
 
-        let flags =
-            self.shared.memory_properties.memory_types[mem_type as usize].property_flags;
+        let flags = self.shared.memory_properties.memory_types[mem_type as usize].property_flags;
         let host_visible = flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE);
 
         let user_size = requirements.size;
@@ -868,21 +850,14 @@ impl Allocator for SlabAllocator {
 
         // Try existing slabs.
         for slab in &mut sp.slabs {
-            if let Some((slot, offset)) =
-                slab.allocate_slot(user_size, self.config.right_align)
-            {
+            if let Some((slot, offset)) = slab.allocate_slot(user_size, self.config.right_align) {
                 // Check prefix for overflow (if enabled and mapped).
                 if self.config.detect_overflow && self.config.right_align {
                     let corrupted = slab.check_prefix(slot, user_size);
                     if corrupted > 0 {
                         self.overflow_count
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let report = format_overflow_report(
-                            slab,
-                            slot,
-                            user_size,
-                            corrupted,
-                        );
+                        let report = format_overflow_report(slab, slot, user_size, corrupted);
                         self.dispatch_error(&self.config.on_overflow, &report);
                     }
                 }
@@ -934,10 +909,7 @@ impl Allocator for SlabAllocator {
         // Check dedicated allocations first.
         {
             let mut dedicated = self.dedicated.lock().unwrap();
-            if let Some(pos) = dedicated
-                .iter()
-                .position(|d| d.memory == allocation.memory)
-            {
+            if let Some(pos) = dedicated.iter().position(|d| d.memory == allocation.memory) {
                 let entry = dedicated.remove(pos);
                 unsafe {
                     if entry.mapped_base.is_some() {
@@ -1195,9 +1167,7 @@ fn format_overflow_report(
     diagnostic::write_pipe(
         &mut o,
         &s,
-        &format!(
-            "[zero prefix {prefix_size}B][user data {user_size}B]",
-        ),
+        &format!("[zero prefix {prefix_size}B][user data {user_size}B]",),
     );
     diagnostic::write_pipe(
         &mut o,
@@ -1319,8 +1289,7 @@ fn format_slab_report(stats: &SlabStats) -> String {
             if stats.total_user_bytes > 0 {
                 format!(
                     "{:.1}%",
-                    (stats.total_driver_bytes as f64 / stats.total_user_bytes as f64 - 1.0)
-                        * 100.0
+                    (stats.total_driver_bytes as f64 / stats.total_user_bytes as f64 - 1.0) * 100.0
                 )
             } else {
                 "N/A (no live allocations)".to_string()

@@ -130,7 +130,11 @@ impl ImageUsageContext {
                 vk::AccessFlags::MEMORY_READ | vk::AccessFlags::MEMORY_WRITE,
                 vk::PipelineStageFlags::ALL_COMMANDS,
             ),
-            Self::Custom { layout, access, stage } => (layout, access, stage),
+            Self::Custom {
+                layout,
+                access,
+                stage,
+            } => (layout, access, stage),
         }
     }
 }
@@ -364,15 +368,22 @@ impl ResourceTracker {
         array_layers: u32,
         aspect: vk::ImageAspectFlags,
     ) {
-        self.images.insert(image, TrackedImage {
-            mip_levels,
-            array_layers,
-            aspect,
-        });
+        self.images.insert(
+            image,
+            TrackedImage {
+                mip_levels,
+                array_layers,
+                aspect,
+            },
+        );
         for mip in 0..mip_levels {
             for layer in 0..array_layers {
                 self.subresources.insert(
-                    SubresourceKey { image, mip_level: mip, array_layer: layer },
+                    SubresourceKey {
+                        image,
+                        mip_level: mip,
+                        array_layer: layer,
+                    },
                     SubresourceState {
                         layout: initial_layout,
                         access: vk::AccessFlags::empty(),
@@ -422,10 +433,7 @@ impl ResourceTracker {
         };
         let first = self.subresources.get(&first_key)?;
 
-        if first.layout == new_layout
-            && first.access == dst_access
-            && first.stage == dst_stage
-        {
+        if first.layout == new_layout && first.access == dst_access && first.stage == dst_stage {
             // Check if all subresources match (potential no-op).
             let all_same = (0..mip_levels).all(|m| {
                 (0..array_layers).all(|l| {
@@ -434,9 +442,9 @@ impl ResourceTracker {
                         mip_level: m,
                         array_layer: l,
                     };
-                    self.subresources.get(&k).is_some_and(|s| {
-                        s.layout == new_layout
-                    })
+                    self.subresources
+                        .get(&k)
+                        .is_some_and(|s| s.layout == new_layout)
                 })
             });
             if all_same {

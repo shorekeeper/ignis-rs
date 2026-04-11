@@ -25,11 +25,11 @@ use std::sync::Arc;
 
 use ash::vk;
 
+use super::allocator::{Allocation, Allocator, BlockAllocator};
+use super::resources::MemoryLocation;
 use crate::command::CommandRecorder;
 use crate::device::SharedState;
 use crate::error::Result;
-use super::allocator::{Allocator, BlockAllocator, Allocation};
-use super::resources::MemoryLocation;
 
 /// A prepared readback from a GPU buffer to CPU memory.
 pub struct ReadbackRequest {

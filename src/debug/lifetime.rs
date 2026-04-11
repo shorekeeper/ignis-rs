@@ -68,7 +68,6 @@ pub enum LeakAction {
     Ignore,
 }
 
-
 impl std::fmt::Debug for LeakAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -283,11 +282,7 @@ fn format_leak_report(objects: &[&TrackedObject]) -> String {
         .map(|(ty, objs)| format!("{}× {}", objs.len(), diagnostic::object_type_name(*ty)))
         .collect();
     type_summary.sort();
-    diagnostic::write_pipe(
-        &mut o,
-        &s,
-        &format!("summary: {}", type_summary.join(", ")),
-    );
+    diagnostic::write_pipe(&mut o, &s, &format!("summary: {}", type_summary.join(", ")));
     diagnostic::write_pipe_empty(&mut o, &s);
 
     // Detailed per-object entries.

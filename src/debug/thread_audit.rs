@@ -31,7 +31,6 @@ pub enum ThreadViolationAction {
     Callback(Box<dyn Fn(&str) + Send + Sync>),
 }
 
-
 impl std::fmt::Debug for ThreadViolationAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -227,30 +226,50 @@ fn format_violation(
     // ── Vulkan spec quote ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Vulkan Specification");
-    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
-        "§3.3.1 External Synchronization:"
-    ));
-    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
-        "\"The following Vulkan objects must not be accessed"
-    ));
-    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
-        " concurrently from multiple host threads:"
-    ));
-    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
-        " VkCommandPool, VkDescriptorPool, VkQueue\""
-    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &s.dim("§3.3.1 External Synchronization:"));
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &s.dim("\"The following Vulkan objects must not be accessed"),
+    );
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &s.dim(" concurrently from multiple host threads:"),
+    );
+    diagnostic::write_pipe_raw(
+        &mut o,
+        &s,
+        &s.dim(" VkCommandPool, VkDescriptorPool, VkQueue\""),
+    );
 
     // ── Remediation options ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Remediation Options (best to worst)");
-    diagnostic::write_numbered(&mut o, &s, 1,
-        "Use ParallelRecorder — one pool per thread, zero contention (recommended)");
-    diagnostic::write_numbered(&mut o, &s, 2,
-        "Create separate CommandPool per thread manually");
-    diagnostic::write_numbered(&mut o, &s, 3,
-        "Wrap pool access in std::sync::Mutex (correct but poor throughput)");
-    diagnostic::write_numbered(&mut o, &s, 4,
-        "Call release_ownership() at frame boundaries for intentional thread transfer");
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        1,
+        "Use ParallelRecorder — one pool per thread, zero contention (recommended)",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        2,
+        "Create separate CommandPool per thread manually",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        3,
+        "Wrap pool access in std::sync::Mutex (correct but poor throughput)",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        4,
+        "Call release_ownership() at frame boundaries for intentional thread transfer",
+    );
 
     diagnostic::write_pipe_empty(&mut o, &s);
     diagnostic::write_note(

@@ -16,11 +16,11 @@ use std::sync::Arc;
 
 use ash::vk;
 
-#[cfg(feature = "tracking")]
-use crate::tracking::deletion::{DeletionQueue, DeletionGuard};
 use super::allocator::{Allocation, Allocator};
 use crate::device::SharedState;
 use crate::error::{Error, Result};
+#[cfg(feature = "tracking")]
+use crate::tracking::deletion::{DeletionGuard, DeletionQueue};
 
 /// Desired memory placement for an allocation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

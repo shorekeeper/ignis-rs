@@ -112,7 +112,10 @@ impl<T: Copy + Send> TypedBuffer<T> {
     /// Panics if the buffer is not host-visible or if `index >= element_count`.
     pub fn read(&self, index: usize) -> T {
         assert!(index < self.element_count, "index out of bounds");
-        let slice = self.inner.mapped_slice().expect("buffer is not host-visible");
+        let slice = self
+            .inner
+            .mapped_slice()
+            .expect("buffer is not host-visible");
         let offset = index * std::mem::size_of::<T>();
         unsafe { (slice.as_ptr().add(offset) as *const T).read() }
     }

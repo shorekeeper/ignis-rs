@@ -11,10 +11,10 @@
 /// Graphics, compute, and ray tracing pipeline builders.
 pub mod builders;
 
-/// Render pass construction.
-pub mod renderpass;
 /// Pipeline cache persistence.
 pub mod cache;
 /// Descriptor set layout, pool, arena, and ring buffer builders.
 #[cfg(feature = "descriptors")]
 pub mod descriptor;
+/// Render pass construction.
+pub mod renderpass;

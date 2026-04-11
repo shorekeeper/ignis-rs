@@ -61,7 +61,6 @@ pub enum HangAction {
     Callback(Box<dyn Fn(&str) + Send + Sync>),
 }
 
-
 impl std::fmt::Debug for HangAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -328,7 +327,8 @@ impl BreadcrumbBuffer {
             shared
                 .device
                 .map_memory(memory, 0, 4, vk::MemoryMapFlags::empty())?
-        }.cast::<u32>();
+        }
+        .cast::<u32>();
 
         // Initialize to zero.
         unsafe { ptr.write(0) };
@@ -449,8 +449,18 @@ fn format_hang_report(
 
     // ── Timing breakdown ──
     diagnostic::write_section(&mut o, &s, "Timing");
-    diagnostic::write_kv(&mut o, &s, "Elapsed since submit", &diagnostic::format_duration(elapsed));
-    diagnostic::write_kv(&mut o, &s, "Detection thread", &diagnostic::current_thread_name());
+    diagnostic::write_kv(
+        &mut o,
+        &s,
+        "Elapsed since submit",
+        &diagnostic::format_duration(elapsed),
+    );
+    diagnostic::write_kv(
+        &mut o,
+        &s,
+        "Detection thread",
+        &diagnostic::current_thread_name(),
+    );
     diagnostic::write_pipe_empty(&mut o, &s);
 
     // ── Breadcrumb trail ──
@@ -459,9 +469,11 @@ fn format_hang_report(
 
         if trail.is_empty() {
             diagnostic::write_pipe(&mut o, &s, "no breadcrumbs recorded in this submission");
-            diagnostic::write_pipe(&mut o, &s, &s.dim(
-                "attach a BreadcrumbBuffer to track GPU progress"
-            ));
+            diagnostic::write_pipe(
+                &mut o,
+                &s,
+                &s.dim("attach a BreadcrumbBuffer to track GPU progress"),
+            );
         } else {
             let last_completed = trail.iter().rev().find(|(_, done)| *done);
             let first_pending = trail.iter().find(|(_, done)| !*done);
@@ -471,7 +483,8 @@ fn format_hang_report(
             // Progress bar
             let progress = completed_count as f64 / total as f64;
             let bar = diagnostic::render_bar(
-                progress, 40,
+                progress,
+                40,
                 Some(&format!("{completed_count}/{total} completed")),
                 &s,
             );
@@ -521,26 +534,52 @@ fn format_hang_report(
             &s,
             "no breadcrumb buffer attached to this submission",
         );
-        diagnostic::write_pipe(&mut o, &s, &s.dim(
-            "use HangDetector::watch(fence, label, Some(&breadcrumbs))"
-        ));
+        diagnostic::write_pipe(
+            &mut o,
+            &s,
+            &s.dim("use HangDetector::watch(fence, label, Some(&breadcrumbs))"),
+        );
     }
 
     // ── Probable causes (ranked) ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Probable Causes (ranked by likelihood)");
-    diagnostic::write_numbered(&mut o, &s, 1,
-        "Infinite or extremely long shader loop (check for while(true) without break)");
-    diagnostic::write_numbered(&mut o, &s, 2,
-        "Excessive dispatch/draw dimensions (verify group counts and vertex counts)");
-    diagnostic::write_numbered(&mut o, &s, 3,
-        "GPU memory corruption causing invalid instruction fetch or data loop");
-    diagnostic::write_numbered(&mut o, &s, 4,
-        "Driver bug (check vendor-specific known issues for your GPU)");
-    diagnostic::write_numbered(&mut o, &s, 5,
-        "TDR timeout too short for this workload (Windows: TdrDelay registry key)");
-    diagnostic::write_numbered(&mut o, &s, 6,
-        "Deadlock between queues waiting on each other's semaphores");
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        1,
+        "Infinite or extremely long shader loop (check for while(true) without break)",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        2,
+        "Excessive dispatch/draw dimensions (verify group counts and vertex counts)",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        3,
+        "GPU memory corruption causing invalid instruction fetch or data loop",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        4,
+        "Driver bug (check vendor-specific known issues for your GPU)",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        5,
+        "TDR timeout too short for this workload (Windows: TdrDelay registry key)",
+    );
+    diagnostic::write_numbered(
+        &mut o,
+        &s,
+        6,
+        "Deadlock between queues waiting on each other's semaphores",
+    );
 
     diagnostic::write_pipe_empty(&mut o, &s);
     diagnostic::write_help(

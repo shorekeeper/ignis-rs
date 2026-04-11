@@ -21,8 +21,8 @@
 
 use ash::vk;
 
-use crate::command::CommandRecorder;
 use super::tracker::{ImageUsageContext, ResourceTracker};
+use crate::command::CommandRecorder;
 
 /// Record mipmap generation commands via blit chain.
 ///

@@ -281,9 +281,7 @@ pub(crate) fn create_managed_device(
     // Auto-enable VK_EXT_debug_utils when debug-tools feature is active.
     #[cfg(feature = "debug-tools")]
     {
-        let available_extensions = unsafe {
-            entry.enumerate_instance_extension_properties(None)
-        };
+        let available_extensions = unsafe { entry.enumerate_instance_extension_properties(None) };
         if let Ok(props) = available_extensions {
             let has_debug_utils = props.iter().any(|p| {
                 let name = unsafe { CStr::from_ptr(p.extension_name.as_ptr()) };
@@ -297,7 +295,7 @@ pub(crate) fn create_managed_device(
             }
         }
     }
-    
+
     let mut layer_ptrs: Vec<*const c_char> = Vec::new();
     let validation_layer =
         unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
@@ -497,7 +495,6 @@ pub(crate) fn create_managed_device(
         supports_timelines,
     };
 
-
     Ok((shared, allocations))
 }
 
@@ -531,8 +528,7 @@ pub(crate) fn create_external_device(
 
     let api_version = device_properties.api_version;
     let supports_timelines = vk::api_version_major(api_version) > 1
-        || (vk::api_version_major(api_version) == 1
-            && vk::api_version_minor(api_version) >= 2);
+        || (vk::api_version_major(api_version) == 1 && vk::api_version_minor(api_version) >= 2);
 
     let (rt_pipeline_fn, accel_struct_fn, rt_properties) = if info.enable_raytracing {
         let rt_fn = ash::khr::ray_tracing_pipeline::Device::new(&info.instance, &info.device);

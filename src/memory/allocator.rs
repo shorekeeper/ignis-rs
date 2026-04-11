@@ -8,9 +8,9 @@ use std::sync::Arc;
 
 use ash::vk;
 
+use super::resources::MemoryLocation;
 use crate::device::SharedState;
 use crate::error::{Error, Result};
-use super::resources::MemoryLocation;
 
 /// Maximum memory types per the Vulkan spec.
 const MAX_MEMORY_TYPES: usize = 32;
@@ -75,11 +75,7 @@ impl Allocator for DedicatedAllocator {
         requirements: &vk::MemoryRequirements,
         location: MemoryLocation,
     ) -> Result<Allocation> {
-        let idx = find_memory_type_index(
-            &self.shared.memory_properties,
-            requirements,
-            location,
-        )?;
+        let idx = find_memory_type_index(&self.shared.memory_properties, requirements, location)?;
 
         let alloc_info = vk::MemoryAllocateInfo::default()
             .allocation_size(requirements.size)
@@ -247,14 +243,10 @@ impl Allocator for BlockAllocator {
         requirements: &vk::MemoryRequirements,
         location: MemoryLocation,
     ) -> Result<Allocation> {
-        let mem_type = find_memory_type_index(
-            &self.shared.memory_properties,
-            requirements,
-            location,
-        )?;
+        let mem_type =
+            find_memory_type_index(&self.shared.memory_properties, requirements, location)?;
 
-        let flags =
-            self.shared.memory_properties.memory_types[mem_type as usize].property_flags;
+        let flags = self.shared.memory_properties.memory_types[mem_type as usize].property_flags;
         let host_visible = flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE);
 
         let alloc_size = requirements.size;

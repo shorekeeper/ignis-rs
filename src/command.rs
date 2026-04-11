@@ -900,7 +900,13 @@ impl CommandRecorder<'_> {
     ) {
         unsafe {
             self.device.cmd_blit_image(
-                self.buffer, src, src_layout, dst, dst_layout, regions, filter,
+                self.buffer,
+                src,
+                src_layout,
+                dst,
+                dst_layout,
+                regions,
+                filter,
             );
         }
     }
@@ -1009,8 +1015,7 @@ impl CommandRecorder<'_> {
     /// Set blend constants dynamically.
     pub fn set_blend_constants(&self, constants: &[f32; 4]) {
         unsafe {
-            self.device
-                .cmd_set_blend_constants(self.buffer, constants);
+            self.device.cmd_set_blend_constants(self.buffer, constants);
         }
     }
 
@@ -1031,7 +1036,11 @@ impl CommandRecorder<'_> {
     ) {
         unsafe {
             self.device.cmd_copy_image_to_buffer(
-                self.buffer, src_image, src_layout, dst_buffer, regions,
+                self.buffer,
+                src_image,
+                src_layout,
+                dst_buffer,
+                regions,
             );
         }
     }

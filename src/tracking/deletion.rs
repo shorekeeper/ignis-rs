@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use ash::vk;
 use ash::vk::Handle;
 
-use crate::memory::allocator::{Allocation, Allocator};
+use super::timeline::QueueTimeline;
 use crate::device::SharedState;
 use crate::diagnostic::{self, Severity, Style};
-use super::timeline::QueueTimeline;
+use crate::memory::allocator::{Allocation, Allocator};
 
 /// How to determine when a resource is safe to destroy.
 #[derive(Clone)]
@@ -109,9 +109,9 @@ impl DeletionQueue {
             let safe = match &entry.guard {
                 DeletionGuard::Timeline { timeline, value } => {
                     let sem_raw = timeline.semaphore().as_raw();
-                    let current = *timeline_cache.entry(sem_raw).or_insert_with(|| {
-                        timeline.current_value().unwrap_or(0)
-                    });
+                    let current = *timeline_cache
+                        .entry(sem_raw)
+                        .or_insert_with(|| timeline.current_value().unwrap_or(0));
                     current >= *value
                 }
                 DeletionGuard::Fence(fence) => unsafe {
@@ -158,10 +158,10 @@ impl DeletionQueue {
     }
 
     fn enqueue(&self, resource: PendingResource, guard: DeletionGuard) {
-        self.entries.lock().unwrap().push_back(DeletionEntry {
-            resource,
-            guard,
-        });
+        self.entries
+            .lock()
+            .unwrap()
+            .push_back(DeletionEntry { resource, guard });
     }
 
     fn destroy_resource_inner(&self, resource: &PendingResource) {
@@ -212,10 +212,7 @@ impl DeletionQueue {
         allocation: Option<(Arc<dyn Allocator>, Allocation)>,
         guard: DeletionGuard,
     ) {
-        self.enqueue(
-            PendingResource::Buffer { handle, allocation },
-            guard,
-        );
+        self.enqueue(PendingResource::Buffer { handle, allocation }, guard);
     }
 
     /// Retire an image after a timeline value is reached.
@@ -225,10 +222,7 @@ impl DeletionQueue {
         allocation: Option<(Arc<dyn Allocator>, Allocation)>,
         guard: DeletionGuard,
     ) {
-        self.enqueue(
-            PendingResource::Image { handle, allocation },
-            guard,
-        );
+        self.enqueue(PendingResource::Image { handle, allocation }, guard);
     }
 
     /// Retire an image view.
@@ -371,7 +365,6 @@ impl Drop for DeletionQueue {
             destroy_resource(device, entry.resource);
         }
     }
-    
 }
 
 /// Destroy a pending resource. Free function to avoid borrow conflicts.

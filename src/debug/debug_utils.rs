@@ -70,8 +70,7 @@ impl DebugUtils {
         name: &str,
     ) {
         let c_name = CString::new(name).unwrap_or_else(|_| CString::new("?").unwrap());
-        let mut info = vk::DebugUtilsObjectNameInfoEXT::default()
-            .object_name(&c_name);
+        let mut info = vk::DebugUtilsObjectNameInfoEXT::default().object_name(&c_name);
         info.object_type = object_type;
         info.object_handle = handle;
         unsafe {
@@ -94,12 +93,7 @@ impl DebugUtils {
     ///
     /// The label appears as a collapsible section in RenderDoc.
     /// `color` is RGBA in \[0, 1\].
-    pub fn cmd_begin_label(
-        &self,
-        rec: &CommandRecorder<'_>,
-        name: &str,
-        color: [f32; 4],
-    ) {
+    pub fn cmd_begin_label(&self, rec: &CommandRecorder<'_>, name: &str, color: [f32; 4]) {
         let c_name = CString::new(name).unwrap_or_else(|_| CString::new("?").unwrap());
         let label = vk::DebugUtilsLabelEXT::default()
             .label_name(&c_name)
@@ -113,18 +107,12 @@ impl DebugUtils {
     /// End the current debug label region.
     pub fn cmd_end_label(&self, rec: &CommandRecorder<'_>) {
         unsafe {
-            self.device_fn
-                .cmd_end_debug_utils_label(rec.raw_buffer());
+            self.device_fn.cmd_end_debug_utils_label(rec.raw_buffer());
         }
     }
 
     /// Insert a single-point debug label (marker).
-    pub fn cmd_insert_label(
-        &self,
-        rec: &CommandRecorder<'_>,
-        name: &str,
-        color: [f32; 4],
-    ) {
+    pub fn cmd_insert_label(&self, rec: &CommandRecorder<'_>, name: &str, color: [f32; 4]) {
         let c_name = CString::new(name).unwrap_or_else(|_| CString::new("?").unwrap());
         let label = vk::DebugUtilsLabelEXT::default()
             .label_name(&c_name)

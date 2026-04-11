@@ -32,9 +32,9 @@ use std::sync::Arc;
 
 use ash::vk;
 
+use crate::command::CommandRecorder;
 use crate::device::SharedState;
 use crate::error::Result;
-use crate::command::CommandRecorder;
 
 /// An active profiling scope handle.
 #[derive(Debug, Clone, Copy)]
@@ -138,11 +138,8 @@ impl GpuProfiler {
                 handle.end_query,
             );
         }
-        self.scopes.push((
-            handle.begin_query,
-            handle.end_query,
-            handle.label_index,
-        ));
+        self.scopes
+            .push((handle.begin_query, handle.end_query, handle.label_index));
     }
 
     /// Read back timing results after GPU execution has completed.
@@ -184,9 +181,7 @@ impl GpuProfiler {
 impl Drop for GpuProfiler {
     fn drop(&mut self) {
         unsafe {
-            self.shared
-                .device
-                .destroy_query_pool(self.query_pool, None);
+            self.shared.device.destroy_query_pool(self.query_pool, None);
         }
     }
 }

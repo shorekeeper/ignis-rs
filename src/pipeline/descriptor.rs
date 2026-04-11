@@ -45,11 +45,7 @@ impl DescriptorSetLayoutBuilder {
     /// Build the layout.
     pub fn build(self) -> Result<vk::DescriptorSetLayout> {
         let ci = vk::DescriptorSetLayoutCreateInfo::default().bindings(&self.bindings);
-        let layout = unsafe {
-            self.shared
-                .device
-                .create_descriptor_set_layout(&ci, None)?
-        };
+        let layout = unsafe { self.shared.device.create_descriptor_set_layout(&ci, None)? };
         Ok(layout)
     }
 }
@@ -478,10 +474,7 @@ impl DescriptorRing {
                 type_counts,
             )?);
         }
-        Ok(Self {
-            arenas,
-            current: 0,
-        })
+        Ok(Self { arenas, current: 0 })
     }
 
     /// Advance to the next frame.

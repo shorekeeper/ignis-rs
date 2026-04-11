@@ -9,7 +9,7 @@
 //! ```sh
 //! cargo run --example smoke_test
 //! ```
-//! 
+//!
 // Compile-time assertion that all features are enabled.
 #[cfg(not(feature = "full"))]
 compile_error!("smoke_test requires --features full");
@@ -744,7 +744,7 @@ fn run() -> ignis::Result<(u32, u32)> {
     passed += 1;
     ok();
 
-// Step 13: Dynamic rendering (Vulkan 1.3).
+    // Step 13: Dynamic rendering (Vulkan 1.3).
     step(13, "Dynamic rendering (Vulkan 1.3)");
     {
         let dev_api = ctx.device_properties().api_version;
@@ -755,15 +755,16 @@ fn run() -> ignis::Result<(u32, u32)> {
             skip("device does not report Vulkan 1.3");
             skipped += 1;
         } else {
-            match ignis::Ignis::managed(
-                ignis::ManagedConfig::new("ignis-dr", vk::API_VERSION_1_3),
-            ) {
+            match ignis::Ignis::managed(ignis::ManagedConfig::new("ignis-dr", vk::API_VERSION_1_3))
+            {
                 Ok(ctx13) => {
                     let dr_pool = ctx13.create_command_pool(ignis::QueueType::Graphics)?;
                     let dr_queue = ctx13.queue(ignis::QueueType::Graphics)?;
 
                     let color_img = ctx13.create_image(&ignis::ImageInfo::texture_2d(
-                        32, 32, vk::Format::R8G8B8A8_UNORM,
+                        32,
+                        32,
+                        vk::Format::R8G8B8A8_UNORM,
                         vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
                     ))?;
                     let color_view = color_img.create_view(vk::ImageAspectFlags::COLOR)?;
@@ -796,7 +797,10 @@ fn run() -> ignis::Result<(u32, u32)> {
                     ignis::DynamicRenderPassBuilder::new()
                         .render_area(vk::Rect2D {
                             offset: vk::Offset2D { x: 0, y: 0 },
-                            extent: vk::Extent2D { width: 32, height: 32 },
+                            extent: vk::Extent2D {
+                                width: 32,
+                                height: 32,
+                            },
                         })
                         .color_attachment(ignis::ColorAttachmentInfo {
                             image_view: color_view,
@@ -1086,21 +1090,21 @@ fn run() -> ignis::Result<(u32, u32)> {
     passed += 1;
     ok();
 
-// Step 21: Resource tracker (layout transitions + buffer barriers).
+    // Step 21: Resource tracker (layout transitions + buffer barriers).
     step(21, "Resource tracker (per-subresource + buffer)");
     {
         let mut tracker = ignis::ResourceTracker::new();
 
         // Create two images to track.
         let img_a = ctx.create_image(&ignis::ImageInfo::texture_2d(
-            16, 16, vk::Format::R8G8B8A8_UNORM,
+            16,
+            16,
+            vk::Format::R8G8B8A8_UNORM,
             vk::ImageUsageFlags::SAMPLED
                 | vk::ImageUsageFlags::TRANSFER_DST
                 | vk::ImageUsageFlags::COLOR_ATTACHMENT,
         ))?;
-        let img_b = ctx.create_image(&ignis::ImageInfo::depth(
-            16, 16, vk::Format::D32_SFLOAT,
-        ))?;
+        let img_b = ctx.create_image(&ignis::ImageInfo::depth(16, 16, vk::Format::D32_SFLOAT))?;
 
         // track_image now requires mip_levels, array_layers, aspect.
         tracker.track_image(
@@ -1138,28 +1142,41 @@ fn run() -> ignis::Result<(u32, u32)> {
         assert_eq!(t2.old_layout, vk::ImageLayout::TRANSFER_DST_OPTIMAL);
         assert_eq!(t2.new_layout, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         // Verify correct stage inference: FragmentShaderRead -> FRAGMENT_SHADER.
-        assert!(t2.dst_stage.contains(vk::PipelineStageFlags::FRAGMENT_SHADER));
+        assert!(t2
+            .dst_stage
+            .contains(vk::PipelineStageFlags::FRAGMENT_SHADER));
         info("img_a: TRANSFER_DST -> SHADER_READ_ONLY (FRAGMENT_SHADER) OK");
 
         // No-op transition (already in target state).
-        let t_noop = tracker.transition_image(
-            img_a.handle(),
-            ignis::ImageUsageContext::FragmentShaderRead,
-        );
+        let t_noop =
+            tracker.transition_image(img_a.handle(), ignis::ImageUsageContext::FragmentShaderRead);
         assert!(t_noop.is_none(), "same usage should yield None");
         info("no-op transition returns None OK");
 
         // Depth image transition.
         let t3 = tracker
-            .transition_image(img_b.handle(), ignis::ImageUsageContext::DepthStencilAttachment)
+            .transition_image(
+                img_b.handle(),
+                ignis::ImageUsageContext::DepthStencilAttachment,
+            )
             .expect("depth transition");
-        assert_eq!(t3.new_layout, vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-        assert_eq!(t3.subresource_range.aspect_mask, vk::ImageAspectFlags::DEPTH);
+        assert_eq!(
+            t3.new_layout,
+            vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+        );
+        assert_eq!(
+            t3.subresource_range.aspect_mask,
+            vk::ImageAspectFlags::DEPTH
+        );
         info("img_b: UNDEFINED -> DEPTH_STENCIL_ATTACHMENT OK");
 
         // Per-mip transition (for mipmap generation pattern).
         let mip_img = ctx.create_image(&ignis::ImageInfo {
-            extent: vk::Extent3D { width: 64, height: 64, depth: 1 },
+            extent: vk::Extent3D {
+                width: 64,
+                height: 64,
+                depth: 1,
+            },
             format: vk::Format::R8G8B8A8_UNORM,
             usage: vk::ImageUsageFlags::SAMPLED
                 | vk::ImageUsageFlags::TRANSFER_SRC
@@ -1200,30 +1217,36 @@ fn run() -> ignis::Result<(u32, u32)> {
 
         // Buffer tracking.
         let test_buf = ctx.create_buffer(&ignis::BufferInfo::storage(
-            256, ignis::MemoryLocation::GpuOnly,
+            256,
+            ignis::MemoryLocation::GpuOnly,
         ))?;
         tracker.track_buffer(test_buf.handle());
         assert_eq!(tracker.buffer_count(), 1);
 
         let bt1 = tracker
-            .transition_buffer(test_buf.handle(), ignis::BufferUsageContext::StorageComputeWrite)
+            .transition_buffer(
+                test_buf.handle(),
+                ignis::BufferUsageContext::StorageComputeWrite,
+            )
             .expect("buffer transition to compute write");
-        assert!(bt1.dst_stage.contains(vk::PipelineStageFlags::COMPUTE_SHADER));
+        assert!(bt1
+            .dst_stage
+            .contains(vk::PipelineStageFlags::COMPUTE_SHADER));
         assert!(bt1.dst_access.contains(vk::AccessFlags::SHADER_WRITE));
         info("buffer: TOP_OF_PIPE -> COMPUTE_SHADER (SHADER_WRITE) OK");
 
         let bt2 = tracker
             .transition_buffer(test_buf.handle(), ignis::BufferUsageContext::VertexInput)
             .expect("buffer transition to vertex input");
-        assert!(bt2.src_stage.contains(vk::PipelineStageFlags::COMPUTE_SHADER));
+        assert!(bt2
+            .src_stage
+            .contains(vk::PipelineStageFlags::COMPUTE_SHADER));
         assert!(bt2.dst_stage.contains(vk::PipelineStageFlags::VERTEX_INPUT));
         info("buffer: COMPUTE_SHADER -> VERTEX_INPUT (VERTEX_ATTRIBUTE_READ) OK");
 
         // No-op buffer transition.
-        let bt_noop = tracker.transition_buffer(
-            test_buf.handle(),
-            ignis::BufferUsageContext::VertexInput,
-        );
+        let bt_noop =
+            tracker.transition_buffer(test_buf.handle(), ignis::BufferUsageContext::VertexInput);
         assert!(bt_noop.is_none());
         info("buffer no-op transition returns None OK");
 
@@ -1239,14 +1262,19 @@ fn run() -> ignis::Result<(u32, u32)> {
         tracker.track_image(
             img_a.handle(),
             vk::ImageLayout::UNDEFINED,
-            1, 1,
+            1,
+            1,
             vk::ImageAspectFlags::COLOR,
         );
         let t_compute = tracker
             .transition_image(img_a.handle(), ignis::ImageUsageContext::ComputeShaderRead)
             .unwrap();
-        assert!(t_compute.dst_stage.contains(vk::PipelineStageFlags::COMPUTE_SHADER));
-        assert!(!t_compute.dst_stage.contains(vk::PipelineStageFlags::FRAGMENT_SHADER));
+        assert!(t_compute
+            .dst_stage
+            .contains(vk::PipelineStageFlags::COMPUTE_SHADER));
+        assert!(!t_compute
+            .dst_stage
+            .contains(vk::PipelineStageFlags::FRAGMENT_SHADER));
         info("ComputeShaderRead -> COMPUTE_SHADER (not FRAGMENT_SHADER) OK");
 
         let cmd = rec.end()?;
@@ -2164,17 +2192,19 @@ fn run() -> ignis::Result<(u32, u32)> {
 
         // Allocate across multiple size classes.
         let mut buffers = Vec::new();
-        let sizes = [64u64, 128, 255, 256, 512, 1000, 2048, 4096, 8000, 16384, 65536];
+        let sizes = [
+            64u64, 128, 255, 256, 512, 1000, 2048, 4096, 8000, 16384, 65536,
+        ];
         for &sz in &sizes {
-            let buf = ctx.create_buffer_with(
-                &slab_alloc,
-                &ignis::BufferInfo::staging(sz),
-            )?;
+            let buf = ctx.create_buffer_with(&slab_alloc, &ignis::BufferInfo::staging(sz))?;
             assert!(buf.mapped_slice().is_some());
             assert!(buf.size() >= sz);
             buffers.push(buf);
         }
-        info(&format!("allocated {} buffers across size classes", sizes.len()));
+        info(&format!(
+            "allocated {} buffers across size classes",
+            sizes.len()
+        ));
 
         // Verify write/read round-trip on each.
         for (i, buf) in buffers.iter().enumerate() {
@@ -2190,14 +2220,15 @@ fn run() -> ignis::Result<(u32, u32)> {
         // Drop half, allocate again (tests slot reuse after quarantine).
         let kept = buffers.split_off(sizes.len() / 2);
         drop(buffers);
-        info(&format!("dropped {} buffers, {} kept", sizes.len() / 2, kept.len()));
+        info(&format!(
+            "dropped {} buffers, {} kept",
+            sizes.len() / 2,
+            kept.len()
+        ));
 
         let mut reused = Vec::new();
         for &sz in &sizes[..sizes.len() / 2] {
-            reused.push(ctx.create_buffer_with(
-                &slab_alloc,
-                &ignis::BufferInfo::staging(sz),
-            )?);
+            reused.push(ctx.create_buffer_with(&slab_alloc, &ignis::BufferInfo::staging(sz))?);
         }
         info("re-allocated into freed slots OK");
 
@@ -2219,10 +2250,8 @@ fn run() -> ignis::Result<(u32, u32)> {
         drop(reused);
 
         // Oversized allocation (exceeds all size classes -> dedicated).
-        let big = ctx.create_buffer_with(
-            &slab_alloc,
-            &ignis::BufferInfo::staging(2 * 1024 * 1024),
-        )?;
+        let big =
+            ctx.create_buffer_with(&slab_alloc, &ignis::BufferInfo::staging(2 * 1024 * 1024))?;
         assert!(big.mapped_slice().is_some());
         big.write(0, &[0xAB; 1024]);
         assert_eq!(big.mapped_slice().unwrap()[0], 0xAB);
@@ -2233,7 +2262,9 @@ fn run() -> ignis::Result<(u32, u32)> {
         let img = ctx.create_image_with(
             &slab_alloc,
             &ignis::ImageInfo::texture_2d(
-                32, 32, vk::Format::R8G8B8A8_UNORM,
+                32,
+                32,
+                vk::Format::R8G8B8A8_UNORM,
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             ),
         )?;
@@ -2261,12 +2292,11 @@ fn run() -> ignis::Result<(u32, u32)> {
         let debug_errors: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let err_clone = debug_errors.clone();
 
-        let debug_config = ignis::SlabConfig::debug()
-            .on_double_free(ignis::SlabErrorAction::Callback(Box::new(
-                move |report| {
-                    err_clone.lock().unwrap().push(report.to_string());
-                },
-            )));
+        let debug_config = ignis::SlabConfig::debug().on_double_free(
+            ignis::SlabErrorAction::Callback(Box::new(move |report| {
+                err_clone.lock().unwrap().push(report.to_string());
+            })),
+        );
         let debug_alloc: Arc<dyn ignis::Allocator> = Arc::new(ignis::SlabAllocator::with_config(
             ctx.shared_state().clone(),
             debug_config,
@@ -2287,10 +2317,7 @@ fn run() -> ignis::Result<(u32, u32)> {
         // Pump allocations so stats are populated.
         let mut stat_bufs = Vec::new();
         for sz in [128u64, 256, 512, 1024, 4096, 65536] {
-            stat_bufs.push(ctx.create_buffer_with(
-                &named_dyn,
-                &ignis::BufferInfo::staging(sz),
-            )?);
+            stat_bufs.push(ctx.create_buffer_with(&named_dyn, &ignis::BufferInfo::staging(sz))?);
         }
         // Free half to see quarantine in stats.
         for _ in 0..3 {
@@ -2364,10 +2391,16 @@ fn run() -> ignis::Result<(u32, u32)> {
     {
         // format_byte_size
         assert_eq!(ignis::format_byte_size(vk::Format::R8G8B8A8_UNORM), Some(4));
-        assert_eq!(ignis::format_byte_size(vk::Format::R32G32B32A32_SFLOAT), Some(16));
+        assert_eq!(
+            ignis::format_byte_size(vk::Format::R32G32B32A32_SFLOAT),
+            Some(16)
+        );
         assert_eq!(ignis::format_byte_size(vk::Format::R16_SFLOAT), Some(2));
         assert_eq!(ignis::format_byte_size(vk::Format::D32_SFLOAT), Some(4));
-        assert_eq!(ignis::format_byte_size(vk::Format::BC7_UNORM_BLOCK), Some(16));
+        assert_eq!(
+            ignis::format_byte_size(vk::Format::BC7_UNORM_BLOCK),
+            Some(16)
+        );
         info("format_byte_size: 5 formats verified");
 
         // format_aspect_mask
@@ -2399,8 +2432,14 @@ fn run() -> ignis::Result<(u32, u32)> {
         info("is_depth/stencil/compressed predicates OK");
 
         // format_block_extent
-        assert_eq!(ignis::format_block_extent(vk::Format::BC7_UNORM_BLOCK), (4, 4));
-        assert_eq!(ignis::format_block_extent(vk::Format::R8G8B8A8_UNORM), (1, 1));
+        assert_eq!(
+            ignis::format_block_extent(vk::Format::BC7_UNORM_BLOCK),
+            (4, 4)
+        );
+        assert_eq!(
+            ignis::format_block_extent(vk::Format::R8G8B8A8_UNORM),
+            (1, 1)
+        );
         info("format_block_extent OK");
 
         // dispatch_size
@@ -2413,7 +2452,10 @@ fn run() -> ignis::Result<(u32, u32)> {
         // dispatch_size_3d
         let groups = ignis::dispatch_size_3d([1920, 1080, 1], [8, 8, 1]);
         assert_eq!(groups, [240, 135, 1]);
-        info(&format!("dispatch_size_3d([1920,1080,1], [8,8,1]) = {:?}", groups));
+        info(&format!(
+            "dispatch_size_3d([1920,1080,1], [8,8,1]) = {:?}",
+            groups
+        ));
 
         // mip_levels_for_size
         assert_eq!(ignis::mip_levels_for_size(256, 256), 9);
@@ -2448,7 +2490,10 @@ fn run() -> ignis::Result<(u32, u32)> {
             .shader(cs.handle(), "main")
             .layout(empty_layout.handle())
             .build()?;
-        info(&format!("compute pipeline with builder layout: {:?}", pipeline));
+        info(&format!(
+            "compute pipeline with builder layout: {:?}",
+            pipeline
+        ));
         unsafe { ctx.device().destroy_pipeline(pipeline, None) };
 
         // RAII: layouts drop here, no manual cleanup needed.
@@ -2483,9 +2528,7 @@ fn run() -> ignis::Result<(u32, u32)> {
 
         // Save to disk.
         cache.save(cache_path)?;
-        let file_size = std::fs::metadata(cache_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let file_size = std::fs::metadata(cache_path).map(|m| m.len()).unwrap_or(0);
         info(&format!("saved to disk: {} bytes", file_size));
 
         // Load from disk.
@@ -2508,7 +2551,10 @@ fn run() -> ignis::Result<(u32, u32)> {
     {
         // Staging ring.
         let mut ring = ctx.create_staging_ring(64 * 1024, 2)?;
-        info(&format!("staging ring: {}B per frame", ring.frame_capacity()));
+        info(&format!(
+            "staging ring: {}B per frame",
+            ring.frame_capacity()
+        ));
 
         ring.begin_frame()?;
         let data = [0xAAu8; 256];
@@ -2541,7 +2587,10 @@ fn run() -> ignis::Result<(u32, u32)> {
             vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::VERTEX_BUFFER,
         )?;
         assert_ne!(frame_alloc.buffer(), vk::Buffer::null());
-        info(&format!("frame allocator buffer: {:?}", frame_alloc.buffer()));
+        info(&format!(
+            "frame allocator buffer: {:?}",
+            frame_alloc.buffer()
+        ));
 
         frame_alloc.advance();
         let (offset1, ptr1) = frame_alloc.push_bytes(256, 256)?;
@@ -2581,10 +2630,7 @@ fn run() -> ignis::Result<(u32, u32)> {
             ignis::MemoryLocation::CpuToGpu,
         )?;
         assert_eq!(buf.element_count(), 64);
-        assert_eq!(
-            buf.byte_size(),
-            (64 * std::mem::size_of::<Vertex>()) as u64
-        );
+        assert_eq!(buf.byte_size(), (64 * std::mem::size_of::<Vertex>()) as u64);
         info(&format!(
             "TypedBuffer<Vertex>: {} elements, {} bytes",
             buf.element_count(),
@@ -2603,9 +2649,18 @@ fn run() -> ignis::Result<(u32, u32)> {
 
         // Write slice.
         let vertices = [
-            Vertex { pos: [0.0, 0.0, 0.0], uv: [0.0, 0.0] },
-            Vertex { pos: [1.0, 0.0, 0.0], uv: [1.0, 0.0] },
-            Vertex { pos: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
+            Vertex {
+                pos: [0.0, 0.0, 0.0],
+                uv: [0.0, 0.0],
+            },
+            Vertex {
+                pos: [1.0, 0.0, 0.0],
+                uv: [1.0, 0.0],
+            },
+            Vertex {
+                pos: [0.0, 1.0, 0.0],
+                uv: [0.0, 1.0],
+            },
         ];
         buf.write_slice(10, &vertices);
         assert_eq!(buf.read(10), vertices[0]);
@@ -2686,7 +2741,10 @@ fn run() -> ignis::Result<(u32, u32)> {
         match enriched {
             Err(ref e) => {
                 let msg = format!("{e}");
-                assert!(msg.contains("no suitable memory type"), "base error present");
+                assert!(
+                    msg.contains("no suitable memory type"),
+                    "base error present"
+                );
                 assert!(
                     msg.contains("shadow map buffer"),
                     "context present in display"
@@ -2717,7 +2775,7 @@ fn run() -> ignis::Result<(u32, u32)> {
     passed += 1;
     ok();
 
-// Step 41: Debug utils + GPU profiler.
+    // Step 41: Debug utils + GPU profiler.
     step(41, "Debug utils + GPU profiler");
     {
         // Debug utils: name objects.

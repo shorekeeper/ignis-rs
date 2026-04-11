@@ -94,9 +94,7 @@ impl QueueTimeline {
 impl Drop for QueueTimeline {
     fn drop(&mut self) {
         unsafe {
-            self.shared
-                .device
-                .destroy_semaphore(self.semaphore, None);
+            self.shared.device.destroy_semaphore(self.semaphore, None);
         }
     }
 }
@@ -185,18 +183,10 @@ impl TimelineWatcher {
     }
 
     /// Register a waker for a specific timeline value.
-    pub(crate) fn register(
-        &self,
-        semaphore: vk::Semaphore,
-        target_value: u64,
-        waker: Waker,
-    ) {
+    pub(crate) fn register(&self, semaphore: vk::Semaphore, target_value: u64, waker: Waker) {
         use ash::vk::Handle;
         let mut state = self.state.lock().unwrap();
-        let queue_map = state
-            .queues
-            .entry(semaphore.as_raw())
-            .or_default();
+        let queue_map = state.queues.entry(semaphore.as_raw()).or_default();
         queue_map
             .entry(target_value)
             .or_default()
@@ -222,9 +212,9 @@ impl TimelineWatcher {
                 s.queues
                     .iter()
                     .filter_map(|(&sem_raw, map)| {
-                        map.keys().next().map(|&min_val| {
-                            (vk::Semaphore::from_raw(sem_raw), min_val)
-                        })
+                        map.keys()
+                            .next()
+                            .map(|&min_val| (vk::Semaphore::from_raw(sem_raw), min_val))
                     })
                     .collect()
             };
@@ -247,11 +237,7 @@ impl TimelineWatcher {
 
             // Block in kernel until ANY semaphore reaches its target.
             // Use 50ms timeout so we can check shutdown periodically.
-            let _result = unsafe {
-                shared
-                    .device
-                    .wait_semaphores(&wait_info, 50_000_000)
-            };
+            let _result = unsafe { shared.device.wait_semaphores(&wait_info, 50_000_000) };
 
             if shutdown.load(Ordering::Relaxed) {
                 break;
@@ -261,9 +247,7 @@ impl TimelineWatcher {
             let mut s = state.lock().unwrap();
             for (&sem_raw, map) in &mut s.queues {
                 let sem = vk::Semaphore::from_raw(sem_raw);
-                let current = match unsafe {
-                    shared.device.get_semaphore_counter_value(sem)
-                } {
+                let current = match unsafe { shared.device.get_semaphore_counter_value(sem) } {
                     Ok(v) => v,
                     Err(_) => continue,
                 };

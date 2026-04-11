@@ -360,44 +360,56 @@ fn format_barrier_report(suggestions: &[BarrierSuggestion]) -> String {
 
             // Before / After comparison table
             diagnostic::write_section(&mut o, &s, "Suggested Replacement");
-            diagnostic::write_table_header(&mut o, &s, &[
-                ("field", 12), ("current", 30), ("suggested", 30),
-            ]);
+            diagnostic::write_table_header(
+                &mut o,
+                &s,
+                &[("field", 12), ("current", 30), ("suggested", 30)],
+            );
 
             if let Some(src) = sug.suggested_src_stage {
-                diagnostic::write_table_row(&mut o, &s, &[
-                    ("src_stage", 12),
-                    (&diagnostic::stage_flags_short(sug.original_src_stage), 30),
-                    (&diagnostic::stage_flags_short(src), 30),
-                ]);
+                diagnostic::write_table_row(
+                    &mut o,
+                    &s,
+                    &[
+                        ("src_stage", 12),
+                        (&diagnostic::stage_flags_short(sug.original_src_stage), 30),
+                        (&diagnostic::stage_flags_short(src), 30),
+                    ],
+                );
             }
             if let Some(dst) = sug.suggested_dst_stage {
-                diagnostic::write_table_row(&mut o, &s, &[
-                    ("dst_stage", 12),
-                    (&diagnostic::stage_flags_short(sug.original_dst_stage), 30),
-                    (&diagnostic::stage_flags_short(dst), 30),
-                ]);
+                diagnostic::write_table_row(
+                    &mut o,
+                    &s,
+                    &[
+                        ("dst_stage", 12),
+                        (&diagnostic::stage_flags_short(sug.original_dst_stage), 30),
+                        (&diagnostic::stage_flags_short(dst), 30),
+                    ],
+                );
             }
             if let Some(src) = sug.suggested_src_access {
-                diagnostic::write_pipe(&mut o, &s, &format!(
-                    "  src_access = {:?}", src
-                ));
+                diagnostic::write_pipe(&mut o, &s, &format!("  src_access = {:?}", src));
             }
             if let Some(dst) = sug.suggested_dst_access {
-                diagnostic::write_pipe(&mut o, &s, &format!(
-                    "  dst_access = {:?}", dst
-                ));
+                diagnostic::write_pipe(&mut o, &s, &format!("  dst_access = {:?}", dst));
             }
 
             // Performance impact note
             diagnostic::write_pipe_empty(&mut o, &s);
             if sug.kind == SuggestionKind::BroadStage {
-                diagnostic::write_pipe_raw(&mut o, &s, &s.bold_yellow(
-                    "  estimated impact: ALL_COMMANDS serializes the full GPU pipeline"
-                ));
-                diagnostic::write_pipe_raw(&mut o, &s, &s.bold_yellow(
-                    "  typical throughput reduction: 10-40%"
-                ));
+                diagnostic::write_pipe_raw(
+                    &mut o,
+                    &s,
+                    &s.bold_yellow(
+                        "  estimated impact: ALL_COMMANDS serializes the full GPU pipeline",
+                    ),
+                );
+                diagnostic::write_pipe_raw(
+                    &mut o,
+                    &s,
+                    &s.bold_yellow("  typical throughput reduction: 10-40%"),
+                );
             }
         }
 

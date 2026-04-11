@@ -59,10 +59,10 @@ pub mod command;
 pub mod device;
 pub mod diagnostic;
 pub mod error;
+pub mod format;
 pub mod queue;
 pub mod shader;
 pub mod sync;
-pub mod format;
 
 // Grouped modules (always compiled, internally feature-gated).
 pub mod memory;
@@ -93,8 +93,8 @@ pub use device::{
 // Core re-exports: queues and async submission.
 pub use queue::{AsyncQueue, GpuFuture, SubmitBuilder};
 pub use sync::{FrameContext, FrameSync};
-pub use tracking::watcher::FenceWatcher;
 pub use tracking::timeline::{QueueTimeline, TimelineWatcher};
+pub use tracking::watcher::FenceWatcher;
 
 // Core re-exports: command recording.
 pub use command::{
@@ -108,20 +108,19 @@ pub use memory::resources::{Buffer, BufferInfo, Image, ImageInfo, MemoryLocation
 
 // Core re-exports: format utilities.
 pub use format::{
-    dispatch_size, dispatch_size_3d, format_aspect_mask, format_byte_size,
-    format_block_extent, is_compressed_format, is_depth_format, is_stencil_format,
-    mip_levels_for_size,
+    dispatch_size, dispatch_size_3d, format_aspect_mask, format_block_extent, format_byte_size,
+    is_compressed_format, is_depth_format, is_stencil_format, mip_levels_for_size,
 };
 
 // Core re-exports: staging, frame alloc, typed buffer, readback.
-pub use memory::staging::{StagingRegion, StagingRing};
 pub use memory::frame_alloc::FrameAllocator;
-pub use memory::typed::TypedBuffer;
 pub use memory::readback::ReadbackRequest;
+pub use memory::staging::{StagingRegion, StagingRing};
+pub use memory::typed::TypedBuffer;
 
 // Core re-exports: pipeline cache and layout.
-pub use pipeline::cache::PipelineCache;
 pub use pipeline::builders::{PipelineLayoutBuilder, PipelineLayoutHandle};
+pub use pipeline::cache::PipelineCache;
 
 // Core re-exports: fence pool.
 pub use sync::FencePool;
@@ -142,22 +141,22 @@ pub use shader::ShaderModule;
 
 // Feature: tracking.
 #[cfg(feature = "tracking")]
-pub use tracking::tracker::{
-    BufferState, BufferTransition, BufferUsageContext, ImageTransition,
-    ImageUsageContext, ResourceTracker, SubresourceState,
-};
-#[cfg(feature = "tracking")]
 pub use tracking::deletion::{DeletionGuard, DeletionQueue};
+#[cfg(feature = "tracking")]
+pub use tracking::tracker::{
+    BufferState, BufferTransition, BufferUsageContext, ImageTransition, ImageUsageContext,
+    ResourceTracker, SubresourceState,
+};
 
 // Feature: slab-allocator.
 #[cfg(feature = "slab-allocator")]
-pub use memory::slab::{SlabAllocator, SlabConfig, SlabErrorAction, SlabStats, SizeClassStats};
+pub use memory::slab::{SizeClassStats, SlabAllocator, SlabConfig, SlabErrorAction, SlabStats};
 
 // Feature: descriptors.
 #[cfg(feature = "descriptors")]
 pub use pipeline::descriptor::{
-    DescriptorArena, DescriptorPoolBuilder, DescriptorRing,
-    DescriptorSetLayoutBuilder, DescriptorWriter,
+    DescriptorArena, DescriptorPoolBuilder, DescriptorRing, DescriptorSetLayoutBuilder,
+    DescriptorWriter,
 };
 
 // Feature: swapchain.
@@ -185,6 +184,8 @@ pub use debug::budget::{BudgetMonitor, BudgetSnapshot, BudgetThresholds, HeapSta
 #[cfg(feature = "debug-tools")]
 pub use debug::cmd_state::{RecordingState, StateErrorAction, ValidatedRecorder};
 #[cfg(feature = "debug-tools")]
+pub use debug::debug_utils::DebugUtils;
+#[cfg(feature = "debug-tools")]
 pub use debug::descriptor_audit::{BoundResource, DescriptorAuditor, DescriptorIssue};
 #[cfg(feature = "debug-tools")]
 pub use debug::hang_detector::{BreadcrumbBuffer, HangAction, HangConfig, HangDetector};
@@ -195,11 +196,9 @@ pub use debug::lifetime::{LeakAction, LifetimeTracker};
 #[cfg(feature = "debug-tools")]
 pub use debug::pipeline_audit::{PipelineAuditor, PipelineIssue};
 #[cfg(feature = "debug-tools")]
-pub use debug::thread_audit::{AuditedPool, ThreadViolationAction};
-#[cfg(feature = "debug-tools")]
-pub use debug::debug_utils::DebugUtils;
-#[cfg(feature = "debug-tools")]
 pub use debug::profiler::{GpuProfiler, ScopeHandle, ScopeResult};
+#[cfg(feature = "debug-tools")]
+pub use debug::thread_audit::{AuditedPool, ThreadViolationAction};
 
 /// The type of GPU queue being requested.
 ///
@@ -398,8 +397,7 @@ impl Ignis {
         let dedicated = self.queues.iter().find(|q| {
             let caps = q.capabilities();
             caps.contains(required)
-                && (queue_type == QueueType::Graphics
-                    || !caps.contains(vk::QueueFlags::GRAPHICS))
+                && (queue_type == QueueType::Graphics || !caps.contains(vk::QueueFlags::GRAPHICS))
         });
 
         dedicated
@@ -563,17 +561,13 @@ impl Ignis {
 
     /// Ray tracing pipeline extension function loader, if available.
     #[inline]
-    pub fn ray_tracing_pipeline_fn(
-        &self,
-    ) -> Option<&ash::khr::ray_tracing_pipeline::Device> {
+    pub fn ray_tracing_pipeline_fn(&self) -> Option<&ash::khr::ray_tracing_pipeline::Device> {
         self.shared.rt_pipeline_fn.as_ref()
     }
 
     /// Acceleration structure extension function loader, if available.
     #[inline]
-    pub fn acceleration_structure_fn(
-        &self,
-    ) -> Option<&ash::khr::acceleration_structure::Device> {
+    pub fn acceleration_structure_fn(&self) -> Option<&ash::khr::acceleration_structure::Device> {
         self.shared.accel_struct_fn.as_ref()
     }
 
@@ -585,9 +579,8 @@ impl Ignis {
     /// calls. The allocator is created on first use and reused afterwards,
     /// ensuring all convenience-created resources share memory blocks.
     fn default_allocator(&self) -> &Arc<dyn Allocator> {
-        self.default_allocator.get_or_init(|| {
-            Arc::new(BlockAllocator::new(Arc::clone(&self.shared)))
-        })
+        self.default_allocator
+            .get_or_init(|| Arc::new(BlockAllocator::new(Arc::clone(&self.shared))))
     }
 
     /// Create the default block allocator (256 MiB blocks).
@@ -641,10 +634,7 @@ impl Ignis {
     /// # }
     /// ```
     #[cfg(feature = "debug-tools")]
-    pub fn create_hardened_allocator(
-        &self,
-        config: HardenedConfig,
-    ) -> Arc<dyn Allocator> {
+    pub fn create_hardened_allocator(&self, config: HardenedConfig) -> Arc<dyn Allocator> {
         let inner = self.create_block_allocator();
         Arc::new(HardenedAllocator::new(
             Arc::clone(&self.shared),
@@ -717,11 +707,7 @@ impl Ignis {
         allocator: &Arc<dyn Allocator>,
         info: &BufferInfo,
     ) -> Result<Buffer> {
-        Buffer::new(
-            Arc::clone(&self.shared),
-            Arc::clone(allocator),
-            info,
-        )
+        Buffer::new(Arc::clone(&self.shared), Arc::clone(allocator), info)
     }
 
     /// Create an image with the default shared block allocator.
@@ -739,11 +725,7 @@ impl Ignis {
         allocator: &Arc<dyn Allocator>,
         info: &ImageInfo,
     ) -> Result<Image> {
-        Image::new(
-            Arc::clone(&self.shared),
-            Arc::clone(allocator),
-            info,
-        )
+        Image::new(Arc::clone(&self.shared), Arc::clone(allocator), info)
     }
 
     // Swapchain.
@@ -771,10 +753,7 @@ impl Ignis {
 
     /// Query swapchain support for a surface.
     #[cfg(feature = "swapchain")]
-    pub fn query_swapchain_support(
-        &self,
-        surface: vk::SurfaceKHR,
-    ) -> Result<SwapchainSupport> {
+    pub fn query_swapchain_support(&self, surface: vk::SurfaceKHR) -> Result<SwapchainSupport> {
         Swapchain::query_support(&self.shared, surface)
     }
 
@@ -931,11 +910,7 @@ impl Ignis {
         max_sets_per_pool: u32,
         type_counts: &[(vk::DescriptorType, u32)],
     ) -> Result<DescriptorArena> {
-        DescriptorArena::new(
-            Arc::clone(&self.shared),
-            max_sets_per_pool,
-            type_counts,
-        )
+        DescriptorArena::new(Arc::clone(&self.shared), max_sets_per_pool, type_counts)
     }
 
     /// Create a per-frame descriptor set ring buffer.
@@ -1001,10 +976,7 @@ impl Ignis {
     ///
     /// Returns [`Error::NoSuitableQueueFamily`] if no queue matches.
     #[cfg(feature = "interop")]
-    pub fn create_queue_broker(
-        &self,
-        queue_type: QueueType,
-    ) -> Result<QueueBroker> {
+    pub fn create_queue_broker(&self, queue_type: QueueType) -> Result<QueueBroker> {
         let q = self.queue(queue_type)?;
         let handle = unsafe {
             self.device()
@@ -1153,10 +1125,7 @@ impl Ignis {
     /// Create a slab allocator with custom configuration.
     #[cfg(feature = "slab-allocator")]
     pub fn create_slab_allocator_with(&self, config: SlabConfig) -> Arc<dyn Allocator> {
-        Arc::new(SlabAllocator::with_config(
-            Arc::clone(&self.shared),
-            config,
-        ))
+        Arc::new(SlabAllocator::with_config(Arc::clone(&self.shared), config))
     }
 
     /// Begin building a pipeline layout.
@@ -1298,13 +1267,15 @@ impl DeviceHandle for Ignis {
 /// ```
 pub mod prelude {
     pub use crate::error::{Error, Result, WithContext};
-    pub use crate::{DeviceHandle, Ignis, ManagedConfig, QueueType};
+    pub use crate::format::{dispatch_size, format_aspect_mask, format_byte_size};
+    pub use crate::{
+        Allocator, BlockAllocator, Buffer, BufferInfo, Image, ImageInfo, MemoryLocation,
+    };
     pub use crate::{AsyncQueue, GpuFuture, SubmitBuilder};
-    pub use crate::{FrameContext, FrameSync, FencePool};
     pub use crate::{CommandPool, CommandRecorder, ParallelRecorder, ShaderModule};
-    pub use crate::{Allocator, BlockAllocator, Buffer, BufferInfo, Image, ImageInfo, MemoryLocation};
     pub use crate::{ComputePipelineBuilder, GraphicsPipelineBuilder, RenderPassBuilder};
+    pub use crate::{DeviceHandle, Ignis, ManagedConfig, QueueType};
+    pub use crate::{FencePool, FrameContext, FrameSync};
+    pub use crate::{FrameAllocator, ReadbackRequest, StagingRing, TypedBuffer};
     pub use crate::{PipelineCache, PipelineLayoutBuilder, PipelineLayoutHandle};
-    pub use crate::{TypedBuffer, StagingRing, FrameAllocator, ReadbackRequest};
-    pub use crate::format::{dispatch_size, format_byte_size, format_aspect_mask};
 }

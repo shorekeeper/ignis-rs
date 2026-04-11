@@ -222,9 +222,18 @@ fn format_journal_dump(
     diagnostic::write_pipe_empty(&mut o, &s);
 
     // Stats summary
-    let pending = entries.iter().filter(|e| e.status() == EntryStatus::Pending).count();
-    let completed = entries.iter().filter(|e| e.status() == EntryStatus::Completed).count();
-    let errored = entries.iter().filter(|e| e.status() == EntryStatus::Error).count();
+    let pending = entries
+        .iter()
+        .filter(|e| e.status() == EntryStatus::Pending)
+        .count();
+    let completed = entries
+        .iter()
+        .filter(|e| e.status() == EntryStatus::Completed)
+        .count();
+    let errored = entries
+        .iter()
+        .filter(|e| e.status() == EntryStatus::Error)
+        .count();
 
     diagnostic::write_pipe(
         &mut o,
@@ -233,7 +242,11 @@ fn format_journal_dump(
             "status: {} completed, {} pending, {} error",
             s.green(&completed.to_string()),
             s.bold_yellow(&pending.to_string()),
-            if errored > 0 { s.bold_red(&errored.to_string()) } else { "0".to_string() },
+            if errored > 0 {
+                s.bold_red(&errored.to_string())
+            } else {
+                "0".to_string()
+            },
         ),
     );
     diagnostic::write_pipe_empty(&mut o, &s);
@@ -262,18 +275,11 @@ fn format_journal_dump(
             &s,
             &format!(
                 "T+{:<12} #{:<4} Queue[{},{}]  \"{}\"  {}",
-                t,
-                entry.sequence,
-                entry.queue_family,
-                entry.queue_index,
-                entry.label,
-                status_str,
+                t, entry.sequence, entry.queue_family, entry.queue_index, entry.label, status_str,
             ),
         );
 
-        if !entry.command_buffers.is_empty()
-            || !entry.wait_semaphores.is_empty()
-        {
+        if !entry.command_buffers.is_empty() || !entry.wait_semaphores.is_empty() {
             let cmds = entry.command_buffers.len();
             let waits = entry.wait_semaphores.len();
             let sigs = entry.signal_semaphores.len();
