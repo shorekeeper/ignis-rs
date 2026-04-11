@@ -2296,7 +2296,14 @@ fn run() -> ignis::Result<(u32, u32)> {
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
             },
         )?;
-        assert!(gpu_buf.mapped_slice().is_none());
+        if is_software_gpu {
+            info("GPU-only slab buffer mapped (software renderer, expected)");
+        } else {
+            assert!(
+                gpu_buf.mapped_slice().is_none(),
+                "GpuOnly must not be mapped"
+            );
+        }
         info("GPU-only slab buffer OK");
         drop(gpu_buf);
 
