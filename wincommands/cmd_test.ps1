@@ -1,6 +1,6 @@
 # cmd_test.ps1 [all|unit|smoke|features|lint|audit|doc|size|miri] [--step N] [--filter X]
 param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
-
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
 $suite = "all"
 $stepFilter = $null
@@ -43,37 +43,30 @@ switch ($suite) {
         $cargoArgs = @("test", "--lib", "--features", "full")
         if ($testFilter) { $cargoArgs += "--"; $cargoArgs += $testFilter }
 
-        $sw = [System.Diagnostics.Stopwatch]::StartNew()
-        $output = & cargo @cargoArgs 2>&1
-        $exitCode = $LASTEXITCODE
-        $sw.Stop()
-
-        # Parse test results
-        $resultLine = ($output | Where-Object { "$_" -match "test result:" }) | Select-Object -Last 1
-        $testLines = @($output | Where-Object { "$_" -match "^test .+ \.\.\." })
-        $failedTests = @($testLines | Where-Object { "$_" -match "FAILED" })
-        $passedTests = @($testLines | Where-Object { "$_" -match "\.\.\. ok" })
-
-        foreach ($t in $testLines) {
-            $line = "$t"
-            if ($line -match "FAILED") {
-                Write-Host "    FAIL $line" -ForegroundColor Red
-            } elseif ($line -match "\.\.\. ok") {
-                Write-Host "    OK   $line" -ForegroundColor Green
-            } else {
-                Write-Host "    $line" -ForegroundColor Gray
-            }
-        }
+        $result = Invoke-CargoWithProgress `
+            -Label "test unit" `
+            -CargoArgs $cargoArgs `
+            -ShowProgress $true `
+            -ShowOutput $true  # Stream test results in real-time
 
         Write-Host ""
-        if ($resultLine) { Write-Host "    $resultLine" -ForegroundColor $(if ($exitCode -eq 0) { "Green" } else { "Red" }) }
-        Write-Host "    $(Format-Duration $sw.Elapsed.TotalMilliseconds)" -ForegroundColor DarkGray
+        $resultLine = $result.Output | Where-Object { $_ -match "test result:" } | Select-Object -Last 1
+        if ($resultLine) {
+            $color = $result.Success ? "Green" : "Red"
+            Write-Host "    $resultLine" -ForegroundColor $color
+        }
 
-        if ($failedTests.Count -gt 0) {
-            Write-Host ""
-            Write-Host "    Failure output:" -ForegroundColor Red
-            $output | Where-Object { "$_" -match "panicked|assertion|thread.*panicked" } | ForEach-Object {
-                Write-Host "      $_" -ForegroundColor DarkRed
+        if (-not $result.Success) {
+            $testFails = Parse-TestOutput $result.Output
+            if ($testFails.Count -gt 0) {
+                Write-Host ""
+                Write-Host "    Failures:" -ForegroundColor Red
+                foreach ($tf in $testFails) {
+                    Write-Host "      $($tf.TestName)" -ForegroundColor Red
+                    if ($tf.PanicMessage) {
+                        Write-Host "        $($tf.PanicMessage)" -ForegroundColor DarkRed
+                    }
+                }
             }
         }
     }

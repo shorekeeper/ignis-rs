@@ -1,6 +1,6 @@
 # cmd_lint.ps1 [clippy|fmt|doc|all] [--fix]
 param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
-
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
 $target = "all"
 $fix = $false
@@ -41,43 +41,36 @@ function Run-Fmt {
 }
 
 function Run-Clippy {
-    $mode = if ($fix) { "--fix --allow-dirty --allow-staged" } else { "" }
-    Write-Host -NoNewline "    clippy (full) ... "
+    $clippyArgs = @(
+        "clippy", "--all-targets", "--features", "full", "--"
+        "-W", "clippy::all", "-W", "clippy::pedantic"
+        "-A", "clippy::module_name_repetitions"
+        "-A", "clippy::too_many_arguments"
+        "-A", "clippy::missing_errors_doc"
+        "-A", "clippy::must_use_candidate"
+        "-A", "clippy::return_self_not_must_use"
+        "-A", "clippy::cast_possible_truncation"
+        "-A", "clippy::cast_sign_loss"
+        "-A", "clippy::cast_precision_loss"
+        "-A", "clippy::missing_panics_doc"
+    )
 
-    $clippyArgs = @("clippy", "--all-targets", "--features", "full")
-    if ($fix) { $clippyArgs += "--fix"; $clippyArgs += "--allow-dirty"; $clippyArgs += "--allow-staged" }
-    $clippyArgs += "--"
-    $clippyArgs += "-W"; $clippyArgs += "clippy::all"
-    $clippyArgs += "-W"; $clippyArgs += "clippy::pedantic"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::module_name_repetitions"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::too_many_arguments"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::missing_errors_doc"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::must_use_candidate"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::return_self_not_must_use"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::cast_possible_truncation"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::cast_sign_loss"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::cast_precision_loss"
-    $clippyArgs += "-A"; $clippyArgs += "clippy::missing_panics_doc"
+    $result = Invoke-CargoWithProgress `
+        -Label "clippy full" `
+        -CargoArgs $clippyArgs `
+        -ShowProgress $true
 
-    $output = & cargo @clippyArgs 2>&1
-    $exitCode = $LASTEXITCODE
-
-    $warnings = @($output | Where-Object { "$_" -match "^warning\[" -or "$_" -match "^warning:" })
-
-    if ($exitCode -eq 0) {
-        if ($warnings.Count -gt 0) {
-            Write-Host "OK ($($warnings.Count) warning(s))" -ForegroundColor Yellow
-            $warnings | Select-Object -First 5 | ForEach-Object {
-                $msg = "$_" -replace "^warning:\s*", ""
+    if ($result.Success) {
+        if ($result.Warnings.Count -gt 0) {
+            Write-Host "    $($result.Warnings.Count) warning(s):" -ForegroundColor Yellow
+            $result.Warnings | Select-Object -First 5 | ForEach-Object {
+                $msg = $_ -replace "^warning:\s*", ""
                 Write-Host "      $msg" -ForegroundColor DarkYellow
             }
-        } else {
-            Write-Host "OK (clean)" -ForegroundColor Green
         }
         return $true
     } else {
-        Write-Host "FAIL" -ForegroundColor Red
-        $output | Where-Object { "$_" -match "^error" } | Select-Object -First 10 | ForEach-Object {
+        $result.Errors | Select-Object -First 10 | ForEach-Object {
             Write-Host "      $_" -ForegroundColor DarkRed
         }
         return $false

@@ -1,28 +1,25 @@
+#Requires -Version 7.0
 # cmd_build.ps1 [full|release|minimal] [--features X,Y] [--release]
-param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
+param([Parameter(ValueFromRemainingArguments)][string[]]$RawArgs)
 
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
-# Parse args
 $features = ""
 $release = $false
-$target = "lib"
 
-for ($i = 0; $i -lt $Args.Count; $i++) {
-    switch ($Args[$i]) {
-        "full"      { $features = "full" }
-        "minimal"   { $features = "" }
-        "release"   { $release = $true }
-        "--release" { $release = $true }
-        "--features" { $i++; if ($i -lt $Args.Count) { $features = $Args[$i] } }
-        "--example" { $i++; $target = "example"; if ($i -lt $Args.Count) { $target = $Args[$i] } }
-        default {
-            if ($Args[$i] -notmatch "^-") { $features = $Args[$i] }
-        }
+for ($i = 0; $i -lt $RawArgs.Count; $i++) {
+    switch ($RawArgs[$i]) {
+        "full"       { $features = "full" }
+        "minimal"    { $features = "" }
+        "release"    { $release = $true }
+        "--release"  { $release = $true }
+        "--features" { $i++; if ($i -lt $RawArgs.Count) { $features = $RawArgs[$i] } }
+        default      { if ($RawArgs[$i] -notmatch "^-") { $features = $RawArgs[$i] } }
     }
 }
 
-$label = if ($features) { $features } else { "no features" }
-$mode = if ($release) { "release" } else { "dev" }
+$label = $features ? $features : "no features"
+$mode = $release ? "release" : "dev"
 
 Write-CmdHeader "build" "[$label] [$mode]"
 
@@ -30,61 +27,40 @@ $cargoArgs = @("build", "--lib")
 if ($features) { $cargoArgs += "--features"; $cargoArgs += $features }
 if ($release) { $cargoArgs += "--release" }
 
-$sw = [System.Diagnostics.Stopwatch]::StartNew()
-$output = & cargo @cargoArgs 2>&1
-$exitCode = $LASTEXITCODE
-$sw.Stop()
+$result = Invoke-CargoWithProgress `
+    -Label "build $label" `
+    -CargoArgs $cargoArgs `
+    -ShowProgress $true
 
-$errors = @($output | Where-Object { "$_" -match "^error" })
-$warnings = @($output | Where-Object { "$_" -match "^warning" })
-
-if ($exitCode -eq 0) {
-    Write-SubStep "compile" "OK" "($(Format-Duration $sw.Elapsed.TotalMilliseconds))"
-
-    if ($warnings.Count -gt 0) {
+if ($result.Success) {
+    if ($result.Warnings.Count -gt 0) {
         Write-Host ""
-        Write-Host "    $($warnings.Count) warning(s):" -ForegroundColor Yellow
-        $warnings | Select-Object -First 10 | ForEach-Object {
-            $w = "$_"
-            # Extract just the warning message
-            if ($w -match "warning:\s*(.+)") {
+        Write-Host "    $($result.Warnings.Count) warning(s):" -ForegroundColor Yellow
+        $result.Warnings | Select-Object -First 10 | ForEach-Object {
+            if ($_ -match "warning:\s*(.+)") {
                 Write-Host "      $($Matches[1])" -ForegroundColor DarkYellow
             }
         }
-        if ($warnings.Count -gt 10) {
-            Write-Host "      ... $($warnings.Count - 10) more" -ForegroundColor DarkGray
-        }
     }
 
-    # Show binary size
-    $targetDir = if ($release) { "target\release" } else { "target\debug" }
+    # Binary size
+    $targetDir = $release ? "target\release" : "target\debug"
     $rlib = Get-ChildItem -Path $targetDir -Filter "libignis*.rlib" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($rlib) {
         $sizeKB = [math]::Round($rlib.Length / 1024, 1)
         Write-Host "    output: $($rlib.Name) (${sizeKB} KiB)" -ForegroundColor DarkGray
     }
 } else {
-    Write-SubStep "compile" "FAIL" ""
-
-    # Parse and display errors nicely
-    $parsedErrors = Format-CargoError ($output | ForEach-Object { "$_" })
-
+    $parsedErrors = Format-CargoError $result.Output
     if ($parsedErrors.Count -gt 0) {
         Write-Host ""
-        foreach ($err in $parsedErrors) {
+        foreach ($err in ($parsedErrors | Select-Object -First 5)) {
             Write-Host "    $($err.Header)" -ForegroundColor Red
-            if ($err.Location) {
-                Write-Host "      at $($err.Location)" -ForegroundColor DarkGray
-            }
+            if ($err.Location) { Write-Host "      at $($err.Location)" -ForegroundColor DarkGray }
             $err.Context | Select-Object -First 5 | ForEach-Object {
                 Write-Host "      $_" -ForegroundColor DarkRed
             }
             Write-Host ""
-        }
-    } else {
-        # Fallback: show raw errors
-        $output | Where-Object { "$_" -match "error" } | Select-Object -First 20 | ForEach-Object {
-            Write-Host "    $_" -ForegroundColor Red
         }
     }
 }

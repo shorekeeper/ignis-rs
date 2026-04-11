@@ -1,6 +1,6 @@
 # cmd_run.ps1 [example_name] [--features X] [--release]
 param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
-
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
 $example = "smoke_test"
 $features = "full"

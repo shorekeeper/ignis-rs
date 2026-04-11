@@ -1,6 +1,6 @@
 # cmd_clean.ps1 [all|target|traces]
 param([string]$What = "target")
-
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
 Write-CmdHeader "clean" "[$What]"
 

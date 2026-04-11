@@ -1,6 +1,6 @@
 # cmd_help.ps1 [command]
 param([string]$Topic = "")
-
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
 $commands = @(
     @{ Cmd = "build";  Alias = "b";  Desc = "Compile the project";
@@ -23,6 +23,8 @@ $commands = @(
        Usage = "clean [all|target|traces]" },
     @{ Cmd = "prof";   Alias = "p";  Desc = "Build/test timing profiler";
        Usage = "prof [build|test] [--features X]" },
+    @{ Cmd = "unlock"; Alias = "ul"; Desc = "Kill stuck cargo/rustc and release locks";
+       Usage = "unlock" },
     @{ Cmd = "help";   Alias = "h";  Desc = "This help";
        Usage = "help [command]" }
 )

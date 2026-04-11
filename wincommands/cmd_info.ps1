@@ -1,6 +1,6 @@
 # cmd_info.ps1 [system|vulkan|project|deps|all]
 param([string]$Section = "all")
-
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
 Write-CmdHeader "info" "[$Section]"
 

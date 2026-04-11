@@ -1,8 +1,10 @@
+#Requires -Version 7.0
 # cmd_prof.ps1 [build|test] [--features X]
-param([Parameter(ValueFromRemainingArguments)][string[]]$Args)
+param([Parameter(ValueFromRemainingArguments)][string[]]$RawArgs)
 
+Get-ChildItem (Join-Path $PSScriptRoot "_*.ps1") | ForEach-Object { . $_.FullName }
 
-$target = if ($Args.Count -gt 0 -and $Args[0] -notmatch "^-") { $Args[0] } else { "build" }
+$target = if ($RawArgs.Count -gt 0 -and $RawArgs[0] -notmatch "^-") { $RawArgs[0] } else { "build" }
 
 Write-CmdHeader "prof" "[$target] timing profiler"
 
@@ -16,37 +18,35 @@ switch ($target) {
             @{ Label = "full";            Features = "full" }
         )
 
-        # Clean first for accurate timing
         Write-Host "    Cleaning for fresh build times..." -ForegroundColor DarkGray
         cargo clean 2>&1 | Out-Null
+        Write-Host ""
 
         $results = @()
 
         foreach ($cfg in $configs) {
-            Write-Host -NoNewline "    $($cfg.Label.PadRight(20)) "
-
             $cargoArgs = @("check", "--lib")
             if ($cfg.Features) { $cargoArgs += "--features"; $cargoArgs += $cfg.Features }
 
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            & cargo @cargoArgs 2>&1 | Out-Null
-            $sw.Stop()
+            $result = Invoke-CargoWithProgress `
+                -Label $cfg.Label.PadRight(20) `
+                -CargoArgs $cargoArgs `
+                -ShowProgress $true `
+                -ShowOutput $false
 
-            $ms = $sw.Elapsed.TotalMilliseconds
-            $bar = "#" * [math]::Min(40, [math]::Max(1, [math]::Round($ms / 200)))
-            $color = if ($ms -gt 10000) { "Red" } elseif ($ms -gt 5000) { "Yellow" } else { "Green" }
+            $results += [PSCustomObject]@{
+                Label   = $cfg.Label
+                Ms      = $result.Elapsed.TotalMilliseconds
+                Success = $result.Success
+            }
 
-            Write-Host "[$bar] " -NoNewline -ForegroundColor $color
-            Write-Host "$(Format-Duration $ms)" -ForegroundColor White
-
-            $results += [PSCustomObject]@{ Label = $cfg.Label; Ms = $ms }
-
-            # Clean between measurements for accurate incremental comparison
+            # Clean between measurements
             cargo clean 2>&1 | Out-Null
         }
 
+        # Summary
         if ($results.Count -ge 2) {
-            $baseline = $results[0].Ms
+            $baseline = ($results | Where-Object { $_.Label -eq "no features" }).Ms
             $full = ($results | Where-Object { $_.Label -eq "full" }).Ms
             if ($full -and $baseline) {
                 $overhead = [math]::Round(($full - $baseline) / 1000, 1)
@@ -60,25 +60,19 @@ switch ($target) {
         Write-Host "    Timing each test suite..." -ForegroundColor DarkGray
         Write-Host ""
 
-        $suites = @("features", "lint", "unit", "audit", "doc", "smoke")
-        $testDir = Join-Path $PSScriptRoot "..\wintests"
+        $suites = @(
+            @{ Label = "features"; CargoArgs = @("check", "--lib") },
+            @{ Label = "lint";     CargoArgs = @("clippy", "--all-targets", "--features", "full", "--", "-W", "clippy::all") },
+            @{ Label = "unit";     CargoArgs = @("test", "--lib", "--features", "full") },
+            @{ Label = "doc";      CargoArgs = @("doc", "--features", "full", "--no-deps") }
+        )
 
         foreach ($suite in $suites) {
-            $script = Join-Path $testDir "test_$suite.ps1"
-            if (-not (Test-Path $script)) { continue }
-
-            Write-Host -NoNewline "    $($suite.PadRight(12)) "
-
-            $sw = [System.Diagnostics.Stopwatch]::StartNew()
-            & $script 2>&1 | Out-Null
-            $sw.Stop()
-
-            $ms = $sw.Elapsed.TotalMilliseconds
-            $bar = "#" * [math]::Min(40, [math]::Max(1, [math]::Round($ms / 500)))
-            $color = if ($LASTEXITCODE -ne 0) { "Red" } elseif ($ms -gt 30000) { "Yellow" } else { "Green" }
-
-            Write-Host "[$bar] " -NoNewline -ForegroundColor $color
-            Write-Host "$(Format-Duration $ms)" -ForegroundColor White
+            $result = Invoke-CargoWithProgress `
+                -Label $suite.Label.PadRight(12) `
+                -CargoArgs $suite.CargoArgs `
+                -ShowProgress $true `
+                -ShowOutput $false
         }
     }
 
