@@ -333,7 +333,13 @@ fn run() -> ignis::Result<(u32, u32)> {
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
             })?;
             assert_eq!(b_gpu.size(), sz);
-            assert!(b_gpu.mapped_slice().is_none(), "GpuOnly must not be mapped");
+            if is_software_gpu {
+                info(&format!(
+                    "size {sz}: GpuOnly mapped (software renderer, expected)"
+                ));
+            } else {
+                assert!(b_gpu.mapped_slice().is_none(), "GpuOnly must not be mapped");
+            }
 
             let b_up = ctx.create_buffer(&ignis::BufferInfo::staging(sz))?;
             assert!(b_up.mapped_slice().is_some(), "CpuToGpu must be mapped");
@@ -344,14 +350,7 @@ fn run() -> ignis::Result<(u32, u32)> {
                 location: ignis::MemoryLocation::GpuToCpu,
                 sharing_mode: vk::SharingMode::EXCLUSIVE,
             })?;
-            if is_software_gpu {
-                // Lavapipe maps everything, GpuOnly is still host-visible.
-                info(&format!(
-                    "size {sz}: GpuOnly mapped (software renderer, expected)"
-                ));
-            } else {
-                assert!(b_gpu.mapped_slice().is_none(), "GpuOnly must not be mapped");
-            }
+            assert!(b_down.mapped_slice().is_some(), "GpuToCpu must be mapped");
 
             info(&format!("size {sz}: all 3 locations OK"));
         }
