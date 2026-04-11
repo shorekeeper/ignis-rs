@@ -120,7 +120,7 @@ pub const ALLOC_JUNK_PATTERN: u8 = 0xCD;
 /// `free_pattern` is `Junk`. Matches MSVC's freed heap pattern.
 pub const FREE_JUNK_PATTERN: u8 = 0xDD;
 
-/// Simple PRNG (SplitMix64) for canary secret generation.
+/// Simple PRNG (`SplitMix64`) for canary secret generation.
 /// Avoids pulling in external RNG crates.
 struct SimpleRng {
     state: u64,
@@ -142,7 +142,7 @@ impl SimpleRng {
 
         // Stack address provides ASLR entropy on most platforms.
         let stack_var: u8 = 0;
-        let addr_part = &stack_var as *const u8 as u64;
+        let addr_part = std::ptr::addr_of!(stack_var) as u64;
 
         Self::new(time_part ^ addr_part ^ 0x517CC1B727220A95)
     }
@@ -158,9 +158,11 @@ impl SimpleRng {
 
 /// What to write over freed host-visible memory.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum FreePattern {
     /// Fill with zeros. Prevents information leaks between allocations.
     /// This is the security-oriented choice.
+    #[default]
     Zero,
     /// Fill with a junk byte pattern. Makes use-after-free reads
     /// immediately obvious (e.g., all `0xDD` in a texture).
@@ -170,19 +172,16 @@ pub enum FreePattern {
     None,
 }
 
-impl Default for FreePattern {
-    fn default() -> Self {
-        Self::Zero
-    }
-}
 
 /// Action taken when guard band corruption is detected.
+#[derive(Default)]
 pub enum CorruptionAction {
     /// Log to stderr and continue. Useful when you want to collect
     /// all corruption events without stopping.
     Log,
     /// Immediately panic with a detailed message. Recommended for
     /// development builds.
+    #[default]
     Panic,
     /// Call a user-provided function. Allows custom logging, metrics,
     /// crash reporting, etc.
@@ -199,16 +198,11 @@ impl std::fmt::Debug for CorruptionAction {
     }
 }
 
-impl Default for CorruptionAction {
-    fn default() -> Self {
-        Self::Panic
-    }
-}
 
 /// Detailed information about a detected guard band corruption.
 #[derive(Debug, Clone)]
 pub struct CorruptionEvent {
-    /// VkDeviceMemory containing the corrupted allocation.
+    /// `VkDeviceMemory` containing the corrupted allocation.
     pub memory: vk::DeviceMemory,
     /// Start offset of the user's allocation (after front guard).
     pub user_offset: vk::DeviceSize,
@@ -435,7 +429,7 @@ struct AllocKey {
 impl AllocKey {
     fn from_allocation(alloc: &Allocation) -> Self {
         Self {
-            memory_raw: alloc.memory.as_raw() as u64,
+            memory_raw: alloc.memory.as_raw(),
             user_offset: alloc.offset,
         }
     }
@@ -445,7 +439,7 @@ impl AllocKey {
 struct AllocMeta {
     /// The actual allocation from the inner allocator (includes guard bands).
     inner_alloc: Allocation,
-    /// Byte size of the front guard band (may differ from config.guard_size
+    /// Byte size of the front guard band (may differ from `config.guard_size`
     /// due to alignment padding).
     front_pad: vk::DeviceSize,
     /// Byte size of the back guard band.
@@ -468,7 +462,7 @@ struct QuarantineEntry {
     padded_size: vk::DeviceSize,
     /// Canary word for re-verification on eviction.
     canary: u64,
-    /// Guard region offsets relative to inner_alloc.offset.
+    /// Guard region offsets relative to `inner_alloc.offset`.
     front_pad: vk::DeviceSize,
     back_start: vk::DeviceSize,
     back_pad: vk::DeviceSize,
@@ -635,8 +629,8 @@ impl HardenedAllocator {
             "Corruptions detected: {}",
             stats.corruptions_detected.load(Ordering::Relaxed)
         );
-        eprintln!("Live metadata entries: {}", meta_count);
-        eprintln!("Quarantine queue length: {}", q_len);
+        eprintln!("Live metadata entries: {meta_count}");
+        eprintln!("Quarantine queue length: {q_len}");
         eprintln!("=== End Report ===");
     }
 
@@ -690,7 +684,7 @@ impl HardenedAllocator {
     /// allocation identity.
     fn compute_canary(&self, memory: vk::DeviceMemory, offset: vk::DeviceSize) -> u64 {
         let mut h = self.canary_secret;
-        h ^= memory.as_raw() as u64;
+        h ^= memory.as_raw();
         h = h.wrapping_mul(0x9E3779B97F4A7C15).wrapping_add(offset);
         h = (h ^ (h >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
         h = (h ^ (h >> 27)).wrapping_mul(0x94D049BB133111EB);
@@ -707,7 +701,7 @@ impl HardenedAllocator {
         let full_words = size / 8;
         let remainder = size % 8;
 
-        let word_ptr = ptr as *mut u64;
+        let word_ptr = ptr.cast::<u64>();
         for i in 0..full_words {
             word_ptr.add(i).write(canary);
         }
@@ -744,8 +738,8 @@ impl HardenedAllocator {
             severity,
             region: region_str,
             memory_handle: memory.as_raw(),
-            user_offset: user_offset as u64,
-            user_size: user_size as u64,
+            user_offset,
+            user_size,
             guard_size,
             first_corrupted: check.first,
             total_corrupted: check.count,
@@ -1044,26 +1038,23 @@ impl Allocator for HardenedAllocator {
                 }
             }
 
-            match map.remove(&key) {
-                Some(m) => m,
-                None => {
-                    let formatted = diagnostic::format_double_free(
-                        allocation.memory.as_raw(),
-                        allocation.offset,
-                        allocation.size,
-                    );
-                    self.dispatch_corruption(&CorruptionEvent {
-                        memory: allocation.memory,
-                        user_offset: allocation.offset,
-                        user_size: allocation.size,
-                        region: GuardRegion::Front,
-                        first_corrupted_byte: 0,
-                        corrupted_byte_count: 0,
-                        expected_canary: 0,
-                        formatted,
-                    });
-                    return;
-                }
+            if let Some(m) = map.remove(&key) { m } else {
+                let formatted = diagnostic::format_double_free(
+                    allocation.memory.as_raw(),
+                    allocation.offset,
+                    allocation.size,
+                );
+                self.dispatch_corruption(&CorruptionEvent {
+                    memory: allocation.memory,
+                    user_offset: allocation.offset,
+                    user_size: allocation.size,
+                    region: GuardRegion::Front,
+                    first_corrupted_byte: 0,
+                    corrupted_byte_count: 0,
+                    expected_canary: 0,
+                    formatted,
+                });
+                return;
             }
         };
 
@@ -1128,7 +1119,7 @@ impl Allocator for HardenedAllocator {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "HardenedAllocator"
     }
 }
@@ -1136,7 +1127,7 @@ impl Allocator for HardenedAllocator {
 impl Drop for HardenedAllocator {
     fn drop(&mut self) {
         // Flush quarantine.
-        let mut q = self.quarantine.get_mut().unwrap();
+        let q = self.quarantine.get_mut().unwrap();
         for entry in q.drain(..) {
             self.inner.free(&entry.inner_alloc);
         }

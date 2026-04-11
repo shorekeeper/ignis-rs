@@ -7,7 +7,7 @@
 //!   `VkQueue` concurrently
 //! - **Resource synchronization**: semaphores/fences between engines
 //! - **Memory**: each engine manages its own allocations, but raw
-//!   handles (VkBuffer, VkImage) can be shared
+//!   handles (`VkBuffer`, `VkImage`) can be shared
 //!
 //! This module provides [`QueueBroker`] for safe queue sharing and
 //! [`InteropSync`] for cross-engine sync.
@@ -28,7 +28,7 @@ pub struct QueueGuard<'a> {
     _lock: MutexGuard<'a, ()>,
 }
 
-impl<'a> QueueGuard<'a> {
+impl QueueGuard<'_> {
     /// Get the raw queue handle. Safe to submit to while this guard exists.
     pub fn handle(&self) -> vk::Queue {
         self.queue
@@ -61,7 +61,7 @@ impl<'a> QueueGuard<'a> {
 /// # Alternative: Separate Queues
 ///
 /// If the device supports multiple queues in the same family, prefer
-/// giving each engine its own queue (queue_index 0 vs 1). This avoids
+/// giving each engine its own queue (`queue_index` 0 vs 1). This avoids
 /// the mutex entirely. Use the broker only when a single queue must
 /// be shared.
 pub struct QueueBroker {

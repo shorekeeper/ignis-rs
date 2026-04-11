@@ -344,8 +344,7 @@ pub(crate) fn create_managed_device(
             qf.queue_flags.contains(vk::QueueFlags::COMPUTE)
                 && !qf.queue_flags.contains(vk::QueueFlags::GRAPHICS)
         })
-        .map(|(i, _)| i as u32)
-        .unwrap_or(graphics_family);
+        .map_or(graphics_family, |(i, _)| i as u32);
 
     // Prefer a dedicated transfer family.
     let transfer_family = queue_family_props
@@ -356,8 +355,7 @@ pub(crate) fn create_managed_device(
                 && !qf.queue_flags.contains(vk::QueueFlags::GRAPHICS)
                 && !qf.queue_flags.contains(vk::QueueFlags::COMPUTE)
         })
-        .map(|(i, _)| i as u32)
-        .unwrap_or(graphics_family);
+        .map_or(graphics_family, |(i, _)| i as u32);
 
     // Deduplicate families.
     let mut unique_families = vec![graphics_family];
@@ -464,7 +462,7 @@ pub(crate) fn create_managed_device(
     let supports_timelines = config.vulkan_version >= vk::API_VERSION_1_2;
 
     let shared = SharedState {
-        entry: entry,
+        entry,
         instance,
         device,
         physical_device,
@@ -560,8 +558,7 @@ fn default_device_score(devices: &[PhysicalDeviceInfo]) -> usize {
             };
             (type_score, d.properties.limits.max_image_dimension2_d)
         })
-        .map(|(i, _)| i)
-        .unwrap_or(0)
+        .map_or(0, |(i, _)| i)
 }
 
 /// Query ray tracing pipeline properties from the physical device.

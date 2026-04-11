@@ -47,11 +47,11 @@ impl std::fmt::Display for RecordingState {
 /// Category of a command for error messages.
 #[derive(Debug, Clone, Copy)]
 pub enum CommandCategory {
-    /// Draw commands (draw, draw_indexed).
+    /// Draw commands (draw, `draw_indexed`).
     Draw,
     /// Compute dispatch.
     Dispatch,
-    /// Transfer commands (copy_buffer, copy_buffer_to_image).
+    /// Transfer commands (`copy_buffer`, `copy_buffer_to_image`).
     Transfer,
     /// Begin a render pass.
     BeginRenderPass,
@@ -94,20 +94,17 @@ struct HistoryEntry {
 }
 
 /// Action on validation error.
+#[derive(Default)]
 pub enum StateErrorAction {
     /// Log to stderr and continue.
     Log,
     /// Panic with full diagnostic.
+    #[default]
     Panic,
     /// Custom callback receiving the formatted report.
     Callback(Box<dyn Fn(&str) + Send + Sync>),
 }
 
-impl Default for StateErrorAction {
-    fn default() -> Self {
-        Self::Panic
-    }
-}
 
 impl std::fmt::Debug for StateErrorAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -544,7 +541,7 @@ fn format_state_error(
         &s,
         &Severity::Error,
         "IGN-S001",
-        &format!("invalid command in current recording state"),
+        "invalid command in current recording state",
     );
     diagnostic::write_location(&mut o, &s, &format!("command: {}", s.bold(command)));
     diagnostic::write_pipe_empty(&mut o, &s);

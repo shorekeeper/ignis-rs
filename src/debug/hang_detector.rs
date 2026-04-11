@@ -50,8 +50,10 @@ struct WatchedSubmission {
 }
 
 /// Action taken when a hang is detected.
+#[derive(Default)]
 pub enum HangAction {
     /// Print report to stderr.
+    #[default]
     Log,
     /// Panic with the full report.
     Panic,
@@ -59,11 +61,6 @@ pub enum HangAction {
     Callback(Box<dyn Fn(&str) + Send + Sync>),
 }
 
-impl Default for HangAction {
-    fn default() -> Self {
-        Self::Log
-    }
-}
 
 impl std::fmt::Debug for HangAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -331,7 +328,7 @@ impl BreadcrumbBuffer {
             shared
                 .device
                 .map_memory(memory, 0, 4, vk::MemoryMapFlags::empty())?
-        } as *mut u32;
+        }.cast::<u32>();
 
         // Initialize to zero.
         unsafe { ptr.write(0) };

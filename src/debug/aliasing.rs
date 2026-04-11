@@ -176,8 +176,7 @@ impl AliasingDetector {
                     // Check if a barrier covers the gap.
                     let barrier_between = state
                         .last_barrier_index
-                        .map(|bi| bi > a.operation_index && bi <= b.operation_index)
-                        .unwrap_or(false);
+                        .is_some_and(|bi| bi > a.operation_index && bi <= b.operation_index);
 
                     if !barrier_between {
                         let (write, conflict) = if a.access_type == AccessType::Write {

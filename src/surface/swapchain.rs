@@ -281,7 +281,7 @@ impl Swapchain {
             Ok((index, suboptimal)) => Ok((index, suboptimal)),
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => Err(Error::SwapchainOutOfDate),
             Err(vk::Result::ERROR_SURFACE_LOST_KHR) => Err(Error::SurfaceLost),
-            Err(vk::Result::TIMEOUT) | Err(vk::Result::NOT_READY) => Err(Error::Timeout),
+            Err(vk::Result::TIMEOUT | vk::Result::NOT_READY) => Err(Error::Timeout),
             Err(e) => Err(Error::Vulkan(e)),
         }
     }
@@ -378,9 +378,7 @@ impl Swapchain {
         width: u32,
         height: u32,
     ) -> vk::Extent2D {
-        if capabilities.current_extent.width != u32::MAX {
-            capabilities.current_extent
-        } else {
+        if capabilities.current_extent.width == u32::MAX {
             vk::Extent2D {
                 width: width
                     .max(capabilities.min_image_extent.width)
@@ -389,6 +387,8 @@ impl Swapchain {
                     .max(capabilities.min_image_extent.height)
                     .min(capabilities.max_image_extent.height),
             }
+        } else {
+            capabilities.current_extent
         }
     }
 

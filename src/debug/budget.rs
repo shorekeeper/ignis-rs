@@ -54,7 +54,7 @@ pub struct HeapStatus {
 pub struct BudgetSnapshot {
     /// Per-heap status.
     pub heaps: Vec<HeapStatus>,
-    /// Whether VK_EXT_memory_budget was available.
+    /// Whether `VK_EXT_memory_budget` was available.
     pub has_budget_extension: bool,
 }
 
@@ -260,8 +260,8 @@ fn render_bar(fraction: f64, width: usize, s: &Style) -> String {
     let filled = filled.min(width);
     let empty = width - filled;
 
-    let fill_str: String = std::iter::repeat('#').take(filled).collect();
-    let empty_str: String = std::iter::repeat('-').take(empty).collect();
+    let fill_str: String = "#".repeat(filled);
+    let empty_str: String = "-".repeat(empty);
 
     let colored_fill = if fraction >= 0.95 {
         s.bold_red(&fill_str)

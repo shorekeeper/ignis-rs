@@ -55,8 +55,10 @@ struct TrackedObject {
 }
 
 /// Action taken when leaks are detected at tracker shutdown.
+#[derive(Default)]
 pub enum LeakAction {
     /// Print the report to stderr and continue.
+    #[default]
     Log,
     /// Panic with the full report. Good for CI.
     Panic,
@@ -66,11 +68,6 @@ pub enum LeakAction {
     Ignore,
 }
 
-impl Default for LeakAction {
-    fn default() -> Self {
-        Self::Log
-    }
-}
 
 impl std::fmt::Debug for LeakAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

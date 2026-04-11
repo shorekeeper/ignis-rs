@@ -40,16 +40,16 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Vulkan(code) => write!(f, "Vulkan error: {:?}", code),
+            Self::Vulkan(code) => write!(f, "Vulkan error: {code:?}"),
             Self::LoadFailed => write!(f, "failed to load Vulkan library"),
             Self::NoSuitableDevice => write!(f, "no suitable physical device found"),
             Self::NoSuitableQueueFamily(qt) => {
-                write!(f, "no queue family with {:?} capability", qt)
+                write!(f, "no queue family with {qt:?} capability")
             }
             Self::FeatureNotEnabled(name) => {
-                write!(f, "required feature/extension not enabled: {}", name)
+                write!(f, "required feature/extension not enabled: {name}")
             }
-            Self::InvalidConfig(msg) => write!(f, "invalid configuration: {}", msg),
+            Self::InvalidConfig(msg) => write!(f, "invalid configuration: {msg}"),
             Self::ThreadPanic => write!(f, "worker thread panicked"),
             Self::InvalidSpirv => write!(f, "invalid SPIR-V data"),
             Self::Timeout => write!(f, "GPU fence wait timed out"),

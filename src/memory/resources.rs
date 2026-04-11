@@ -266,7 +266,7 @@ impl Buffer {
     /// The buffer must be host-visible and large enough.
     pub unsafe fn write_struct<T: Copy>(&self, value: &T) {
         let bytes =
-            std::slice::from_raw_parts(value as *const T as *const u8, std::mem::size_of::<T>());
+            std::slice::from_raw_parts((value as *const T).cast::<u8>(), std::mem::size_of::<T>());
         self.write(0, bytes);
     }
 

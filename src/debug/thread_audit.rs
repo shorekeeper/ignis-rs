@@ -20,20 +20,17 @@ struct ThreadRecord {
 }
 
 /// Action on thread violation.
+#[derive(Default)]
 pub enum ThreadViolationAction {
     /// Log to stderr.
     Log,
     /// Panic.
+    #[default]
     Panic,
     /// Custom callback.
     Callback(Box<dyn Fn(&str) + Send + Sync>),
 }
 
-impl Default for ThreadViolationAction {
-    fn default() -> Self {
-        Self::Panic
-    }
-}
 
 impl std::fmt::Debug for ThreadViolationAction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -202,7 +199,7 @@ fn format_violation(
         &s,
         &format!(
             "pool owner:    thread {} ({:?})",
-            s.bold_green(&format!("\"{}\"", owner_name)),
+            s.bold_green(&format!("\"{owner_name}\"")),
             owner_id,
         ),
     );
@@ -213,7 +210,7 @@ fn format_violation(
         &s,
         &format!(
             "accessed from: thread {} ({:?})",
-            s.bold_red(&format!("\"{}\"", accessor_name)),
+            s.bold_red(&format!("\"{accessor_name}\"")),
             accessor_id,
         ),
     );

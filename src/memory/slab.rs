@@ -86,7 +86,7 @@ use std::sync::Arc;
 use ash::vk;
 use ash::vk::Handle;
 
-use super::allocator::{align_up, Allocation, Allocator};
+use super::allocator::{Allocation, Allocator};
 use crate::device::SharedState;
 use crate::diagnostic::{self, Severity, Style};
 use crate::error::{Error, Result};
@@ -94,7 +94,7 @@ use super::resources::MemoryLocation;
 
 /// Size classes in bytes. Each is a power of two.
 /// Allocations are rounded up to the next size class.
-/// Anything above the largest class gets a dedicated VkDeviceMemory.
+/// Anything above the largest class gets a dedicated `VkDeviceMemory`.
 const SIZE_CLASSES: &[u64] = &[
     256,
     512,
@@ -127,7 +127,7 @@ fn find_size_class(size: u64, alignment: u64) -> Option<usize> {
 /// Configuration for the slab allocator.
 #[derive(Debug)]
 pub struct SlabConfig {
-    /// Bytes per slab (VkDeviceMemory block). Default: 2 MiB.
+    /// Bytes per slab (`VkDeviceMemory` block). Default: 2 MiB.
     pub slab_size: u64,
     /// Maximum slots held in quarantine per slab before reuse.
     /// Higher = better UAF detection, more memory waste. Default: 64.
@@ -254,7 +254,7 @@ pub struct SlotEvent {
     pub kind: SlotEventKind,
     /// Microseconds since slab creation.
     pub timestamp_us: u64,
-    /// Hash of caller file:line (for compact storage).
+    /// Hash of caller <file:line> (for compact storage).
     pub caller_hash: u32,
 }
 
@@ -279,7 +279,7 @@ impl std::fmt::Display for SlotEventKind {
     }
 }
 
-/// SplitMix64 PRNG for slot randomization. Lock-free, one per slab.
+/// `SplitMix64` PRNG for slot randomization. Lock-free, one per slab.
 struct Rng {
     state: u64,
 }
@@ -303,11 +303,11 @@ impl Rng {
         if bound == 0 {
             return 0;
         }
-        (self.next() % bound as u64) as u32
+        (self.next() % u64::from(bound)) as u32
     }
 }
 
-/// Per-slot history ring (only allocated when slot_history is enabled).
+/// Per-slot history ring (only allocated when `slot_history` is enabled).
 struct SlotHistory {
     events: Vec<Vec<SlotEvent>>,
     ring_cap: usize,
@@ -334,7 +334,7 @@ impl SlotHistory {
     }
 }
 
-/// A single slab (one VkDeviceMemory) with fixed-size slots.
+/// A single slab (one `VkDeviceMemory`) with fixed-size slots.
 struct Slab {
     memory: vk::DeviceMemory,
     total_size: u64,
@@ -385,9 +385,9 @@ impl Slab {
                 Ok(p) => {
                     // Zero the entire slab on creation.
                     unsafe {
-                        std::ptr::write_bytes(p as *mut u8, 0, slab_size as usize);
+                        std::ptr::write_bytes(p.cast::<u8>(), 0, slab_size as usize);
                     }
-                    Some(p as *mut u8)
+                    Some(p.cast::<u8>())
                 }
                 Err(e) => {
                     unsafe { shared.device.free_memory(memory, None) };
@@ -501,7 +501,7 @@ impl Slab {
         None
     }
 
-    /// Allocate a slot. Returns (slot_index, byte_offset_in_slab).
+    /// Allocate a slot. Returns (`slot_index`, `byte_offset_in_slab`).
     fn allocate_slot(
         &mut self,
         user_size: u64,
@@ -511,7 +511,7 @@ impl Slab {
         self.set_allocated(slot);
         self.free_count -= 1;
 
-        let slot_base = slot as u64 * self.slot_size;
+        let slot_base = u64::from(slot) * self.slot_size;
         let offset = if right_align && user_size < self.slot_size {
             // Right-align: place user data at the END of the slot.
             // Prefix is the gap that catches underflow from previous slot.
@@ -541,7 +541,7 @@ impl Slab {
         // Zero the slot if mapped.
         if zero {
             if let Some(base) = self.mapped_base {
-                let slot_base = slot as u64 * self.slot_size;
+                let slot_base = u64::from(slot) * self.slot_size;
                 unsafe {
                     std::ptr::write_bytes(
                         base.add(slot_base as usize),
@@ -604,7 +604,7 @@ impl Slab {
             return 0; // No prefix to check.
         }
         let prefix_size = (self.slot_size - user_size) as usize;
-        let slot_base = (slot as u64 * self.slot_size) as usize;
+        let slot_base = (u64::from(slot) * self.slot_size) as usize;
         let mut corrupted = 0;
         unsafe {
             let ptr = base.add(slot_base);
@@ -650,7 +650,7 @@ pub struct SizeClassStats {
     /// Free and reusable slots.
     pub free_slots: u32,
     /// Internal fragmentation: bytes wasted due to rounding up to size class.
-    /// (slot_size - average_user_size) * allocated_slots.
+    /// (`slot_size` - `average_user_size`) * `allocated_slots`.
     pub internal_fragmentation_bytes: u64,
 }
 
@@ -659,7 +659,7 @@ pub struct SizeClassStats {
 pub struct SlabStats {
     /// Per-size-class statistics (across all memory types).
     pub size_classes: Vec<SizeClassStats>,
-    /// Total VkDeviceMemory allocations (slab count + dedicated count).
+    /// Total `VkDeviceMemory` allocations (slab count + dedicated count).
     pub device_memory_count: u32,
     /// Total bytes allocated from driver.
     pub total_driver_bytes: u64,
@@ -682,9 +682,9 @@ pub struct SlabStats {
 pub struct SlabAllocator {
     shared: Arc<SharedState>,
     config: SlabConfig,
-    /// One mutex per memory type (same sharding as BlockAllocator).
+    /// One mutex per memory type (same sharding as `BlockAllocator`).
     pools: Vec<std::sync::Mutex<Option<TypePool>>>,
-    /// Dedicated allocations (oversized, one VkDeviceMemory each).
+    /// Dedicated allocations (oversized, one `VkDeviceMemory` each).
     dedicated: std::sync::Mutex<Vec<DedicatedEntry>>,
     /// Atomic error counters.
     double_free_count: std::sync::atomic::AtomicU64,
@@ -779,7 +779,7 @@ impl SlabAllocator {
         // user sizes for zero-overhead reasons.
         let slab_user_bytes: u64 = size_classes
             .iter()
-            .map(|sc| sc.allocated_slots as u64 * sc.slot_size)
+            .map(|sc| u64::from(sc.allocated_slots) * sc.slot_size)
             .sum();
         let dedicated_user_bytes: u64 = dedicated.iter().map(|d| d.size).sum();
         let total_user_bytes = slab_user_bytes + dedicated_user_bytes;
@@ -913,7 +913,7 @@ impl Allocator for SlabAllocator {
         sp.slabs.push(slab);
 
         let slab = sp.slabs.last_mut().unwrap();
-        let (slot, offset) = slab
+        let (_slot, offset) = slab
             .allocate_slot(user_size, self.config.right_align)
             .expect("freshly created slab must have space");
 
@@ -981,7 +981,7 @@ impl Allocator for SlabAllocator {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "SlabAllocator"
     }
 }
@@ -1008,7 +1008,7 @@ impl SlabAllocator {
                     vk::MemoryMapFlags::empty(),
                 )
             } {
-                Ok(p) => Some(p as *mut u8),
+                Ok(p) => Some(p.cast::<u8>()),
                 Err(e) => {
                     unsafe { self.shared.device.free_memory(memory, None) };
                     return Err(Error::Vulkan(e));
@@ -1072,7 +1072,7 @@ fn caller_location_hash() -> u32 {
     let loc = std::panic::Location::caller();
     let mut h: u32 = 2166136261;
     for b in loc.file().bytes() {
-        h ^= b as u32;
+        h ^= u32::from(b);
         h = h.wrapping_mul(16777619);
     }
     h ^= loc.line();
@@ -1196,8 +1196,7 @@ fn format_overflow_report(
         &mut o,
         &s,
         &format!(
-            "[zero prefix {}B][user data {}B]",
-            prefix_size, user_size,
+            "[zero prefix {prefix_size}B][user data {user_size}B]",
         ),
     );
     diagnostic::write_pipe(
@@ -1213,7 +1212,7 @@ fn format_overflow_report(
 
     // Show hex of corrupted prefix if mapped.
     if let Some(base) = slab.mapped_base {
-        let slot_base = (slot as u64 * slab.slot_size) as usize;
+        let slot_base = (u64::from(slot) * slab.slot_size) as usize;
         let show_bytes = prefix_size.min(16) as usize;
         let mut actual = Vec::with_capacity(show_bytes);
         unsafe {
@@ -1283,7 +1282,7 @@ fn format_bytes(bytes: u64) -> String {
     } else if bytes >= 1024 {
         format!("{:.1} KiB", bytes as f64 / 1024.0)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 
@@ -1360,7 +1359,7 @@ fn format_slab_report(stats: &SlabStats) -> String {
         };
 
         let utilization = if sc.total_slots > 0 {
-            sc.allocated_slots as f64 / sc.total_slots as f64 * 100.0
+            f64::from(sc.allocated_slots) / f64::from(sc.total_slots) * 100.0
         } else {
             0.0
         };
@@ -1398,8 +1397,8 @@ fn mini_bar(fraction: f64, width: usize, s: &Style) -> String {
     let filled = (fraction * width as f64).round() as usize;
     let filled = filled.min(width);
     let empty = width - filled;
-    let f: String = std::iter::repeat('#').take(filled).collect();
-    let e: String = std::iter::repeat('-').take(empty).collect();
+    let f: String = "#".repeat(filled);
+    let e: String = "-".repeat(empty);
     let cf = if fraction >= 0.9 {
         s.bold_red(&f)
     } else if fraction >= 0.7 {

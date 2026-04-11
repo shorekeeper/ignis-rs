@@ -183,17 +183,17 @@ impl DeletionQueue {
                 PendingResource::ImageView(h) => device.destroy_image_view(*h, None),
                 PendingResource::Pipeline(h) => device.destroy_pipeline(*h, None),
                 PendingResource::PipelineLayout(h) => {
-                    device.destroy_pipeline_layout(*h, None)
+                    device.destroy_pipeline_layout(*h, None);
                 }
                 PendingResource::ShaderModule(h) => device.destroy_shader_module(*h, None),
                 PendingResource::RenderPass(h) => device.destroy_render_pass(*h, None),
                 PendingResource::Framebuffer(h) => device.destroy_framebuffer(*h, None),
                 PendingResource::Sampler(h) => device.destroy_sampler(*h, None),
                 PendingResource::DescriptorPool(h) => {
-                    device.destroy_descriptor_pool(*h, None)
+                    device.destroy_descriptor_pool(*h, None);
                 }
                 PendingResource::DescriptorSetLayout(h) => {
-                    device.destroy_descriptor_set_layout(*h, None)
+                    device.destroy_descriptor_set_layout(*h, None);
                 }
                 PendingResource::Fence(h) => device.destroy_fence(*h, None),
                 PendingResource::Semaphore(h) => device.destroy_semaphore(*h, None),
@@ -399,7 +399,7 @@ fn destroy_resource(device: &ash::Device, resource: PendingResource) {
             PendingResource::Sampler(h) => device.destroy_sampler(h, None),
             PendingResource::DescriptorPool(h) => device.destroy_descriptor_pool(h, None),
             PendingResource::DescriptorSetLayout(h) => {
-                device.destroy_descriptor_set_layout(h, None)
+                device.destroy_descriptor_set_layout(h, None);
             }
             PendingResource::Fence(h) => device.destroy_fence(h, None),
             PendingResource::Semaphore(h) => device.destroy_semaphore(h, None),

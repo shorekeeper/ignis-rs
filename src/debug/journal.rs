@@ -176,7 +176,7 @@ impl SubmissionJournal {
         format_journal_dump(&all, &self.creation_time, None)
     }
 
-    /// Dump with an error context (e.g., VK_ERROR_DEVICE_LOST).
+    /// Dump with an error context (e.g., `VK_ERROR_DEVICE_LOST`).
     pub fn dump_with_error(&self, error: vk::Result) -> String {
         let entries = self.entries.lock().unwrap();
         let all: Vec<&JournalEntry> = entries.iter().collect();
@@ -193,7 +193,7 @@ fn format_journal_dump(
     let mut o = String::with_capacity(256 + entries.len() * 256);
 
     let (code, msg) = if let Some(e) = error {
-        ("IGN-J001", format!("{:?} - submission journal dump", e))
+        ("IGN-J001", format!("{e:?} - submission journal dump"))
     } else {
         ("IGN-J002", "submission journal dump".to_string())
     };

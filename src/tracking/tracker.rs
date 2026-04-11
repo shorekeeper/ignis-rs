@@ -434,7 +434,7 @@ impl ResourceTracker {
                         mip_level: m,
                         array_layer: l,
                     };
-                    self.subresources.get(&k).map_or(false, |s| {
+                    self.subresources.get(&k).is_some_and(|s| {
                         s.layout == new_layout
                     })
                 })

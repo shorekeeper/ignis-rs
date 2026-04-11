@@ -106,9 +106,9 @@ struct PendingWaker {
     waker: Waker,
 }
 
-/// Internal state shared between TimelineWatcher thread and user threads.
+/// Internal state shared between `TimelineWatcher` thread and user threads.
 struct WatcherState {
-    /// Per-queue pending wakers: timeline_semaphore_raw -> (value -> wakers)
+    /// Per-queue pending wakers: `timeline_semaphore_raw` -> (value -> wakers)
     queues: std::collections::HashMap<u64, BTreeMap<u64, Vec<PendingWaker>>>,
 }
 
@@ -120,8 +120,8 @@ struct WatcherState {
 /// # Complexity
 ///
 /// - Blocking: O(1) kernel-side (handled by the GPU driver)
-/// - Wake processing: O(queues + completed_futures) per wake-up
-/// - Registration: O(log N) per future (BTreeMap insert)
+/// - Wake processing: O(queues + `completed_futures`) per wake-up
+/// - Registration: O(log N) per future (`BTreeMap` insert)
 pub struct TimelineWatcher {
     state: Arc<Mutex<WatcherState>>,
     notify: Arc<WatcherNotify>,
@@ -259,7 +259,7 @@ impl TimelineWatcher {
 
             // Read current values and wake completed futures.
             let mut s = state.lock().unwrap();
-            for (&sem_raw, map) in s.queues.iter_mut() {
+            for (&sem_raw, map) in &mut s.queues {
                 let sem = vk::Semaphore::from_raw(sem_raw);
                 let current = match unsafe {
                     shared.device.get_semaphore_counter_value(sem)
@@ -292,7 +292,7 @@ impl TimelineWatcher {
             .unwrap()
             .queues
             .values()
-            .map(|m| m.values().map(|v| v.len()).sum::<usize>())
+            .map(|m| m.values().map(std::vec::Vec::len).sum::<usize>())
             .sum()
     }
 }

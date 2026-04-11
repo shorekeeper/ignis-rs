@@ -50,7 +50,7 @@ pub(crate) struct WatchedFenceState {
 pub(crate) struct WatchedFenceInner {
     /// Set to `true` when the fence has been signaled.
     pub completed: bool,
-    /// Set to `true` by the GpuFuture's drop impl to prevent further
+    /// Set to `true` by the `GpuFuture`'s drop impl to prevent further
     /// fence access by the watcher.
     pub dropped: bool,
     /// The most recent waker from the async executor.

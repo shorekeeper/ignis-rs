@@ -147,7 +147,7 @@ pub struct CommandRecorder<'a> {
     pub(crate) buffer: vk::CommandBuffer,
 }
 
-impl<'a> CommandRecorder<'a> {
+impl CommandRecorder<'_> {
     /// End command buffer recording.
     pub fn end(self) -> Result<vk::CommandBuffer> {
         // SAFETY: buffer is in recording state.

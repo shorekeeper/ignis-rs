@@ -136,7 +136,7 @@ pub struct SubmitBuilder<'a> {
     fence_watcher: Option<Arc<FenceWatcher>>,
 }
 
-impl<'a> SubmitBuilder<'a> {
+impl SubmitBuilder<'_> {
     /// Add a command buffer to the submission.
     pub fn command_buffer(mut self, buffer: vk::CommandBuffer) -> Self {
         self.command_buffers.push(buffer);
@@ -354,7 +354,7 @@ impl GpuFuture {
         if self.completed {
             return Ok(true);
         }
-        let nanos = timeout.as_nanos().min(u64::MAX as u128) as u64;
+        let nanos = timeout.as_nanos().min(u128::from(u64::MAX)) as u64;
         match &self.inner {
             FutureKind::Timeline {
                 timeline,

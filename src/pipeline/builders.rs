@@ -658,9 +658,9 @@ impl RayTracingPipeline {
             .as_ref()
             .ok_or(Error::FeatureNotEnabled("ray tracing properties"))?;
 
-        let handle_size = rt_props.shader_group_handle_size as u64;
-        let handle_alignment = rt_props.shader_group_handle_alignment as u64;
-        let base_alignment = rt_props.shader_group_base_alignment as u64;
+        let handle_size = u64::from(rt_props.shader_group_handle_size);
+        let handle_alignment = u64::from(rt_props.shader_group_handle_alignment);
+        let base_alignment = u64::from(rt_props.shader_group_base_alignment);
 
         let handle_size_aligned = align_up(handle_size, handle_alignment);
 
@@ -677,10 +677,10 @@ impl RayTracingPipeline {
         };
 
         // Compute region sizes (aligned to base_alignment).
-        let raygen_size = align_up(raygen_count as u64 * handle_size_aligned, base_alignment);
-        let miss_size = align_up(miss_count as u64 * handle_size_aligned, base_alignment);
-        let hit_size = align_up(hit_count as u64 * handle_size_aligned, base_alignment);
-        let callable_size = align_up(callable_count as u64 * handle_size_aligned, base_alignment);
+        let raygen_size = align_up(u64::from(raygen_count) * handle_size_aligned, base_alignment);
+        let miss_size = align_up(u64::from(miss_count) * handle_size_aligned, base_alignment);
+        let hit_size = align_up(u64::from(hit_count) * handle_size_aligned, base_alignment);
+        let callable_size = align_up(u64::from(callable_count) * handle_size_aligned, base_alignment);
 
         let total_size = raygen_size + miss_size + hit_size + callable_size;
 

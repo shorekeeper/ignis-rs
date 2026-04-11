@@ -351,8 +351,7 @@ impl DescriptorArena {
 
         match unsafe { self.shared.device.allocate_descriptor_sets(&ai) } {
             Ok(sets) => return Ok(sets[0]),
-            Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY)
-            | Err(vk::Result::ERROR_FRAGMENTED_POOL) => {
+            Err(vk::Result::ERROR_OUT_OF_POOL_MEMORY | vk::Result::ERROR_FRAGMENTED_POOL) => {
                 // Pool full. Create a new one.
             }
             Err(e) => return Err(Error::from(e)),

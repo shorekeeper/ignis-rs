@@ -9,6 +9,10 @@
 //! ```sh
 //! cargo run --example smoke_test
 //! ```
+//! 
+// Compile-time assertion that all features are enabled.
+#[cfg(not(feature = "full"))]
+compile_error!("smoke_test requires --features full");
 
 use ash::vk::Handle;
 use std::ffi::CStr;

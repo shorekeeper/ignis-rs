@@ -169,12 +169,12 @@ pub(crate) fn diff_markers(expected: &[u8], actual: &[u8]) -> String {
     let len = expected.len().min(actual.len());
     let mut markers = String::with_capacity(len * 3);
     for i in 0..len {
-        if expected[i] != actual[i] {
-            markers.push('^');
-            markers.push('^');
+        if expected[i] == actual[i] {
+            markers.push(' ');
+            markers.push(' ');
         } else {
-            markers.push(' ');
-            markers.push(' ');
+            markers.push('^');
+            markers.push('^');
         }
         if i < len - 1 {
             markers.push(' ');

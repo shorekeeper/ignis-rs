@@ -97,7 +97,7 @@ impl Allocator for DedicatedAllocator {
                     vk::MemoryMapFlags::empty(),
                 )?
             };
-            Some(ptr as *mut u8)
+            Some(ptr.cast::<u8>())
         } else {
             None
         };
@@ -120,7 +120,7 @@ impl Allocator for DedicatedAllocator {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "DedicatedAllocator"
     }
 }
@@ -141,7 +141,7 @@ struct Block {
     total_size: vk::DeviceSize,
     mapped_base: Option<*mut u8>,
     free_list: Vec<FreeRegion>,
-    /// Next-fit hint: index into free_list to start searching from.
+    /// Next-fit hint: index into `free_list` to start searching from.
     /// Provides amortized O(1) when allocations are sequential.
     next_fit: usize,
 }
@@ -172,7 +172,7 @@ struct MemoryPool {
 pub struct BlockAllocator {
     shared: Arc<SharedState>,
     block_size: vk::DeviceSize,
-    /// One mutex per memory type. Only indices 0..memory_type_count are used.
+    /// One mutex per memory type. Only indices `0..memory_type_count` are used.
     pools: Vec<std::sync::Mutex<Option<MemoryPool>>>,
 }
 
@@ -221,7 +221,7 @@ impl BlockAllocator {
                     vk::MemoryMapFlags::empty(),
                 )
             } {
-                Ok(p) => Some(p as *mut u8),
+                Ok(p) => Some(p.cast::<u8>()),
                 Err(e) => {
                     unsafe { self.shared.device.free_memory(memory, None) };
                     return Err(Error::Vulkan(e));
@@ -318,7 +318,7 @@ impl Allocator for BlockAllocator {
         }
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "BlockAllocator"
     }
 }

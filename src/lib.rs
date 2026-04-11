@@ -27,11 +27,11 @@
 //!
 //! | Feature | What it adds |
 //! |---|---|
-//! | `tracking` | ResourceTracker (per-subresource barriers), DeletionQueue |
-//! | `descriptors` | Descriptor set/pool builders, DescriptorArena, DescriptorRing |
-//! | `slab-allocator` | Production hardened SlabAllocator |
+//! | `tracking` | `ResourceTracker` (per-subresource barriers), `DeletionQueue` |
+//! | `descriptors` | Descriptor set/pool builders, `DescriptorArena`, `DescriptorRing` |
+//! | `slab-allocator` | Production hardened `SlabAllocator` |
 //! | `swapchain` | Swapchain and surface management |
-//! | `interop` | QueueBroker, InteropSync for cross-engine sharing |
+//! | `interop` | `QueueBroker`, `InteropSync` for cross-engine sharing |
 //! | `debug-tools` | 12 validation/diagnostic modules |
 //! | `full` | All of the above |
 //!
@@ -587,7 +587,7 @@ impl Ignis {
         ))
     }
 
-    /// Create a dedicated allocator (one VkDeviceMemory per resource).
+    /// Create a dedicated allocator (one `VkDeviceMemory` per resource).
     ///
     /// Only suitable for a small number of large resources. Most drivers
     /// limit total allocations to ~4096.
@@ -625,7 +625,7 @@ impl Ignis {
 
     /// Create a hardened allocator wrapping a specific inner allocator.
     ///
-    /// Composable: wrap any allocator (BlockAllocator, DedicatedAllocator,
+    /// Composable: wrap any allocator (`BlockAllocator`, `DedicatedAllocator`,
     /// or a foreign gpu-allocator/vk-mem bridge).
     #[cfg(feature = "debug-tools")]
     pub fn create_hardened_allocator_with(
@@ -769,8 +769,8 @@ impl Ignis {
     /// Uses `vkWaitSemaphores(ANY)` which blocks in the kernel at O(1) cost
     /// regardless of pending future count. One watcher services all queues.
     ///
-    /// Wake processing is O(queues + completed_futures) per wake-up, compared
-    /// to O(total_pending) for the fence watcher.
+    /// Wake processing is O(queues + `completed_futures`) per wake-up, compared
+    /// to `O(total_pending)` for the fence watcher.
     ///
     /// Falls back gracefully if timelines are not available (check
     /// [`supports_timelines`](Self::supports_timelines) first).
@@ -786,7 +786,7 @@ impl Ignis {
     /// mip levels and array layers) and buffer barrier tracking. It uses
     /// explicit [`ImageUsageContext`] / [`BufferUsageContext`] enums instead
     /// of guessing pipeline stages from layouts, eliminating the
-    /// SHADER_READ_ONLY -> FRAGMENT_SHADER misattribution bug.
+    /// `SHADER_READ_ONLY` -> `FRAGMENT_SHADER` misattribution bug.
     #[cfg(feature = "tracking")]
     pub fn create_resource_tracker(&self) -> ResourceTracker {
         ResourceTracker::new()
@@ -796,7 +796,7 @@ impl Ignis {
 
     /// Create a timeline-based deletion queue.
     ///
-    /// Resources are tagged with a (timeline_semaphore, value) guard
+    /// Resources are tagged with a (`timeline_semaphore`, value) guard
     /// when retired. They are destroyed only after `poll()` confirms the
     /// GPU has moved past that point. No concept of "frame" - works
     /// correctly with multiple windows, async compute, and independent

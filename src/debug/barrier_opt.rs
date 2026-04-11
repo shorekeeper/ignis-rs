@@ -337,19 +337,19 @@ fn format_barrier_report(suggestions: &[BarrierSuggestion]) -> String {
 
         if has_suggestion {
             diagnostic::write_pipe_empty(&mut o, &s);
-            diagnostic::write_pipe(&mut o, &s, &format!("{}", s.green("suggested:")));
+            diagnostic::write_pipe(&mut o, &s, &s.green("suggested:").clone());
 
             if let Some(src) = sug.suggested_src_stage {
-                diagnostic::write_pipe(&mut o, &s, &format!("  src_stage = {:?}", src));
+                diagnostic::write_pipe(&mut o, &s, &format!("  src_stage = {src:?}"));
             }
             if let Some(dst) = sug.suggested_dst_stage {
-                diagnostic::write_pipe(&mut o, &s, &format!("  dst_stage = {:?}", dst));
+                diagnostic::write_pipe(&mut o, &s, &format!("  dst_stage = {dst:?}"));
             }
             if let Some(src) = sug.suggested_src_access {
-                diagnostic::write_pipe(&mut o, &s, &format!("  src_access = {:?}", src));
+                diagnostic::write_pipe(&mut o, &s, &format!("  src_access = {src:?}"));
             }
             if let Some(dst) = sug.suggested_dst_access {
-                diagnostic::write_pipe(&mut o, &s, &format!("  dst_access = {:?}", dst));
+                diagnostic::write_pipe(&mut o, &s, &format!("  dst_access = {dst:?}"));
             }
         }
 
