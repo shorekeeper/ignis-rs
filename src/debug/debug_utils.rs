@@ -51,7 +51,8 @@ impl DebugUtils {
     ///
     /// The instance must have been created with `VK_EXT_debug_utils`.
     /// If the extension is not available, methods will cause undefined
-    /// behavior. Use [`try_new`](Self::try_new) for a safe alternative.
+    /// behavior. If the extension might not be available, check for it
+    /// before calling this constructor.
     pub fn new(instance: &ash::Instance, device: &ash::Device) -> Self {
         Self {
             device_fn: ash::ext::debug_utils::Device::new(instance, device),

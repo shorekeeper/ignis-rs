@@ -2,7 +2,7 @@
 name = "ignis"
 version = "1.0.0"
 edition = "2021"
-rust-version = "1.70"
+rust-version = "1.75"
 description = "Vulkan queue orchestration, memory management, and GPU debugging toolkit built on ash"
 license = "i dont give a fuck license"
 keywords = ["vulkan", "graphics", "async", "raytracing", "gpu"]

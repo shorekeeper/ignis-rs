@@ -216,11 +216,11 @@ jobs:
           RUSTDOCFLAGS: -D warnings
 
   msrv:
-    name: MSRV (1.70)
+    name: MSRV (1.75)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.70.0
+      - uses: dtolnay/rust-toolchain@1.75.0
       - uses: Swatinem/rust-cache@v2
 
       - name: Install Vulkan loader

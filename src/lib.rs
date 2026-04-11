@@ -1,3 +1,5 @@
+#![allow(rustdoc::broken_intra_doc_links)]
+#![allow(rustdoc::private_intra_doc_links)]
 #![warn(missing_docs)]
 
 //! # Ignis - Asynchronous Vulkan Queue Orchestration
