@@ -62,6 +62,7 @@ pub mod error;
 pub mod queue;
 pub mod shader;
 pub mod sync;
+pub mod format;
 
 // Grouped modules (always compiled, internally feature-gated).
 pub mod memory;
@@ -104,6 +105,29 @@ pub use command::{
 // Core re-exports: memory and allocation.
 pub use memory::allocator::{Allocation, Allocator, BlockAllocator, DedicatedAllocator};
 pub use memory::resources::{Buffer, BufferInfo, Image, ImageInfo, MemoryLocation};
+
+// Core re-exports: format utilities.
+pub use format::{
+    dispatch_size, dispatch_size_3d, format_aspect_mask, format_byte_size,
+    format_block_extent, is_compressed_format, is_depth_format, is_stencil_format,
+    mip_levels_for_size,
+};
+
+// Core re-exports: staging, frame alloc, typed buffer, readback.
+pub use memory::staging::{StagingRegion, StagingRing};
+pub use memory::frame_alloc::FrameAllocator;
+pub use memory::typed::TypedBuffer;
+pub use memory::readback::ReadbackRequest;
+
+// Core re-exports: pipeline cache and layout.
+pub use pipeline::cache::PipelineCache;
+pub use pipeline::builders::{PipelineLayoutBuilder, PipelineLayoutHandle};
+
+// Core re-exports: fence pool.
+pub use sync::FencePool;
+
+// Core re-exports: error context.
+pub use error::WithContext;
 
 // Core re-exports: shaders, pipelines, render passes.
 pub use pipeline::builders::{
@@ -172,6 +196,10 @@ pub use debug::lifetime::{LeakAction, LifetimeTracker};
 pub use debug::pipeline_audit::{PipelineAuditor, PipelineIssue};
 #[cfg(feature = "debug-tools")]
 pub use debug::thread_audit::{AuditedPool, ThreadViolationAction};
+#[cfg(feature = "debug-tools")]
+pub use debug::debug_utils::DebugUtils;
+#[cfg(feature = "debug-tools")]
+pub use debug::profiler::{GpuProfiler, ScopeHandle, ScopeResult};
 
 /// The type of GPU queue being requested.
 ///
@@ -287,6 +315,7 @@ impl Ignis {
     pub fn managed(config: ManagedConfig) -> Result<Self> {
         let (shared, allocations) = device::create_managed_device(config)?;
         let shared = Arc::new(shared);
+        diagnostic::init_diagnostic_context(&shared);
         let queues = Self::build_queues(&shared, allocations);
         Ok(Self {
             shared,
@@ -317,6 +346,7 @@ impl Ignis {
     pub fn external(info: ExternalDeviceInfo) -> Result<Self> {
         let (shared, allocations) = device::create_external_device(info)?;
         let shared = Arc::new(shared);
+        diagnostic::init_diagnostic_context(&shared);
         let queues = Self::build_queues(&shared, allocations);
         Ok(Self {
             shared,
@@ -1128,6 +1158,118 @@ impl Ignis {
             config,
         ))
     }
+
+    /// Begin building a pipeline layout.
+    pub fn pipeline_layout_builder(&self) -> PipelineLayoutBuilder {
+        PipelineLayoutBuilder::new(Arc::clone(&self.shared))
+    }
+
+    /// Create an empty pipeline cache.
+    pub fn create_pipeline_cache(&self) -> Result<PipelineCache> {
+        PipelineCache::new(Arc::clone(&self.shared))
+    }
+
+    /// Create a pipeline cache from a file (falls back to empty if invalid).
+    pub fn create_pipeline_cache_from_file(
+        &self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<PipelineCache> {
+        PipelineCache::from_file(Arc::clone(&self.shared), path)
+    }
+
+    /// Create a staging ring buffer for CPU→GPU uploads.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_capacity` - Bytes per frame's staging buffer
+    /// * `frames_in_flight` - Number of frame slots
+    pub fn create_staging_ring(
+        &self,
+        frame_capacity: vk::DeviceSize,
+        frames_in_flight: u32,
+    ) -> Result<StagingRing> {
+        let allocator = self.create_block_allocator();
+        StagingRing::new(
+            Arc::clone(&self.shared),
+            allocator,
+            frame_capacity,
+            frames_in_flight,
+        )
+    }
+
+    /// Create a per-frame bump allocator for transient GPU data.
+    ///
+    /// # Arguments
+    ///
+    /// * `capacity` - Bytes per frame
+    /// * `frames_in_flight` - Number of frame slots
+    /// * `usage` - Buffer usage flags for the backing buffers
+    pub fn create_frame_allocator(
+        &self,
+        capacity: vk::DeviceSize,
+        frames_in_flight: u32,
+        usage: vk::BufferUsageFlags,
+    ) -> Result<FrameAllocator> {
+        let allocator = self.default_allocator();
+        FrameAllocator::new(
+            Arc::clone(&self.shared),
+            Arc::clone(allocator),
+            capacity,
+            frames_in_flight,
+            usage,
+        )
+    }
+
+    /// Create a typed buffer with the default allocator.
+    pub fn create_typed_buffer<T: Copy + Send>(
+        &self,
+        element_count: usize,
+        usage: vk::BufferUsageFlags,
+        location: MemoryLocation,
+    ) -> Result<TypedBuffer<T>> {
+        let allocator = self.default_allocator();
+        TypedBuffer::new(
+            Arc::clone(&self.shared),
+            Arc::clone(allocator),
+            element_count,
+            usage,
+            location,
+        )
+    }
+
+    /// Create a reusable fence pool.
+    pub fn create_fence_pool(&self) -> FencePool {
+        FencePool::new(Arc::clone(&self.shared))
+    }
+
+    /// Create a debug utils wrapper for object naming and command labels.
+    ///
+    /// Requires `VK_EXT_debug_utils` to have been enabled on the instance.
+    /// In managed mode with `debug-tools`, this is done automatically.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_debug_utils(&self) -> DebugUtils {
+        DebugUtils::new(&self.shared.instance, &self.shared.device)
+    }
+
+    /// Create a GPU timestamp profiler.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_queries` - Maximum timestamp queries (each scope uses 2).
+    #[cfg(feature = "debug-tools")]
+    pub fn create_gpu_profiler(&self, max_queries: u32) -> Result<GpuProfiler> {
+        GpuProfiler::new(&self.shared, max_queries)
+    }
+}
+
+impl Drop for Ignis {
+    fn drop(&mut self) {
+        // Emit diagnostic session summary if any diagnostics were produced.
+        let summary = diagnostic::session_summary();
+        if !summary.is_empty() {
+            eprint!("{summary}");
+        }
+    }
 }
 
 impl DeviceHandle for Ignis {
@@ -1155,11 +1297,14 @@ impl DeviceHandle for Ignis {
 /// use ignis::prelude::*;
 /// ```
 pub mod prelude {
-    pub use crate::error::{Error, Result};
+    pub use crate::error::{Error, Result, WithContext};
     pub use crate::{DeviceHandle, Ignis, ManagedConfig, QueueType};
     pub use crate::{AsyncQueue, GpuFuture, SubmitBuilder};
-    pub use crate::{FrameContext, FrameSync};
+    pub use crate::{FrameContext, FrameSync, FencePool};
     pub use crate::{CommandPool, CommandRecorder, ParallelRecorder, ShaderModule};
     pub use crate::{Allocator, BlockAllocator, Buffer, BufferInfo, Image, ImageInfo, MemoryLocation};
     pub use crate::{ComputePipelineBuilder, GraphicsPipelineBuilder, RenderPassBuilder};
+    pub use crate::{PipelineCache, PipelineLayoutBuilder, PipelineLayoutHandle};
+    pub use crate::{TypedBuffer, StagingRing, FrameAllocator, ReadbackRequest};
+    pub use crate::format::{dispatch_size, format_byte_size, format_aspect_mask};
 }

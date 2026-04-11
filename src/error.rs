@@ -35,6 +35,8 @@ pub enum Error {
     SwapchainOutOfDate,
     /// The swapchain surface has been lost.
     SurfaceLost,
+    /// An error with additional context describing what operation failed.
+    Context(Box<Error>, String),
 }
 
 impl fmt::Display for Error {
@@ -58,6 +60,9 @@ impl fmt::Display for Error {
             }
             Self::SwapchainOutOfDate => write!(f, "swapchain is out of date"),
             Self::SurfaceLost => write!(f, "surface has been lost"),
+            Self::Context(inner, ctx) => {
+                write!(f, "{inner}\n  context: {ctx}")
+            }
         }
     }
 }
@@ -68,5 +73,36 @@ impl From<vk::Result> for Error {
     #[inline]
     fn from(result: vk::Result) -> Self {
         Error::Vulkan(result)
+    }
+}
+
+/// Extension trait for enriching errors with context strings.
+///
+/// # Example
+///
+/// ```rust
+/// use ignis::error::WithContext;
+///
+/// fn load_texture(ignis: &ignis::Ignis) -> ignis::Result<()> {
+///     let buf = ignis.create_buffer(&ignis::BufferInfo::staging(4096))
+///         .context("allocating staging buffer for texture upload")?;
+///     Ok(())
+/// }
+/// ```
+pub trait WithContext<T> {
+    /// Attach a static context string to the error.
+    fn context(self, ctx: &'static str) -> Result<T>;
+
+    /// Attach a lazily-evaluated context string to the error.
+    fn with_context<F: FnOnce() -> String>(self, f: F) -> Result<T>;
+}
+
+impl<T> WithContext<T> for Result<T> {
+    fn context(self, ctx: &'static str) -> Result<T> {
+        self.map_err(|e| Error::Context(Box::new(e), ctx.to_string()))
+    }
+
+    fn with_context<F: FnOnce() -> String>(self, f: F) -> Result<T> {
+        self.map_err(|e| Error::Context(Box::new(e), f()))
     }
 }

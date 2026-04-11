@@ -94,7 +94,7 @@ const MINIMAL_FRAG_SPV: &[u32] = &[
     0x00010038,
 ];
 
-const TOTAL_STEPS: u32 = 33;
+const TOTAL_STEPS: u32 = 41;
 
 fn main() {
     println!();
@@ -1469,7 +1469,7 @@ fn run() -> ignis::Result<(u32, u32)> {
                 "draw outside render pass must trigger error"
             );
             info("draw outside render pass detected");
-            for line in v_list.last().unwrap().lines().take(6) {
+            for line in v_list.last().unwrap().lines() {
                 println!("       {line}");
             }
         }
@@ -1548,7 +1548,7 @@ fn run() -> ignis::Result<(u32, u32)> {
                 "dispatch inside render pass must trigger error"
             );
             info("dispatch inside render pass detected");
-            for line in v_list.last().unwrap().lines().take(6) {
+            for line in v_list.last().unwrap().lines() {
                 println!("       {line}");
             }
             drop(v_list);
@@ -1667,7 +1667,7 @@ fn run() -> ignis::Result<(u32, u32)> {
         assert!(dump.contains("submission_3"));
         assert!(dump.contains("submission_4"));
         info("dump_last(3) contains expected entries");
-        for line in dump.lines().take(8) {
+        for line in dump.lines() {
             println!("       {line}");
         }
 
@@ -1681,7 +1681,7 @@ fn run() -> ignis::Result<(u32, u32)> {
         let err_dump = journal.dump_with_error(vk::Result::ERROR_DEVICE_LOST);
         assert!(err_dump.contains("DEVICE_LOST"));
         info("dump_with_error contains error context");
-        for line in err_dump.lines().take(6) {
+        for line in err_dump.lines() {
             println!("       {line}");
         }
 
@@ -1730,7 +1730,7 @@ fn run() -> ignis::Result<(u32, u32)> {
             "cross-thread access must trigger violation"
         );
         info("cross-thread violation detected");
-        for line in v_list.last().unwrap().lines().take(8) {
+        for line in v_list.last().unwrap().lines() {
             println!("       {line}");
         }
         drop(v_list);
@@ -1775,7 +1775,7 @@ fn run() -> ignis::Result<(u32, u32)> {
 
         let report = det.report();
         assert!(report.contains("IGN-A001"));
-        for line in report.lines().take(10) {
+        for line in report.lines() {
             println!("       {line}");
         }
 
@@ -1863,7 +1863,7 @@ fn run() -> ignis::Result<(u32, u32)> {
         match monitor.check() {
             Some(report) => {
                 info("budget threshold exceeded:");
-                for line in report.lines().take(8) {
+                for line in report.lines() {
                     println!("       {line}");
                 }
             }
@@ -1923,7 +1923,7 @@ fn run() -> ignis::Result<(u32, u32)> {
 
         let report = auditor.report(&issues);
         assert!(report.contains("IGN-D001"));
-        for line in report.lines().take(8) {
+        for line in report.lines() {
             println!("       {line}");
         }
 
@@ -1978,7 +1978,7 @@ fn run() -> ignis::Result<(u32, u32)> {
         info(&format!("bind with 1 set -> {} issue(s)", issues.len()));
 
         let report = auditor.report(&issues);
-        for line in report.lines().take(6) {
+        for line in report.lines() {
             println!("       {line}");
         }
 
@@ -2064,7 +2064,7 @@ fn run() -> ignis::Result<(u32, u32)> {
         ));
 
         let report = analyzer.report();
-        for line in report.lines().take(16) {
+        for line in report.lines() {
             println!("       {line}");
         }
 
@@ -2355,6 +2355,461 @@ fn run() -> ignis::Result<(u32, u32)> {
         let err_count = errors.load(std::sync::atomic::Ordering::Relaxed);
         assert_eq!(err_count, 0, "multi-threaded slab stress test had errors");
         info("4-thread x 50 alloc/free stress test OK (0 errors)");
+    }
+    passed += 1;
+    ok();
+
+    // Step 34: Format utilities and dispatch helpers.
+    step(34, "Format utilities and dispatch helpers");
+    {
+        // format_byte_size
+        assert_eq!(ignis::format_byte_size(vk::Format::R8G8B8A8_UNORM), Some(4));
+        assert_eq!(ignis::format_byte_size(vk::Format::R32G32B32A32_SFLOAT), Some(16));
+        assert_eq!(ignis::format_byte_size(vk::Format::R16_SFLOAT), Some(2));
+        assert_eq!(ignis::format_byte_size(vk::Format::D32_SFLOAT), Some(4));
+        assert_eq!(ignis::format_byte_size(vk::Format::BC7_UNORM_BLOCK), Some(16));
+        info("format_byte_size: 5 formats verified");
+
+        // format_aspect_mask
+        assert_eq!(
+            ignis::format_aspect_mask(vk::Format::R8G8B8A8_UNORM),
+            vk::ImageAspectFlags::COLOR
+        );
+        assert_eq!(
+            ignis::format_aspect_mask(vk::Format::D32_SFLOAT),
+            vk::ImageAspectFlags::DEPTH
+        );
+        assert_eq!(
+            ignis::format_aspect_mask(vk::Format::D24_UNORM_S8_UINT),
+            vk::ImageAspectFlags::DEPTH | vk::ImageAspectFlags::STENCIL
+        );
+        assert_eq!(
+            ignis::format_aspect_mask(vk::Format::S8_UINT),
+            vk::ImageAspectFlags::STENCIL
+        );
+        info("format_aspect_mask: COLOR, DEPTH, DEPTH|STENCIL, STENCIL OK");
+
+        // is_depth/stencil/compressed
+        assert!(ignis::is_depth_format(vk::Format::D32_SFLOAT));
+        assert!(!ignis::is_depth_format(vk::Format::R8G8B8A8_UNORM));
+        assert!(ignis::is_stencil_format(vk::Format::D24_UNORM_S8_UINT));
+        assert!(!ignis::is_stencil_format(vk::Format::D32_SFLOAT));
+        assert!(ignis::is_compressed_format(vk::Format::BC7_UNORM_BLOCK));
+        assert!(!ignis::is_compressed_format(vk::Format::R8G8B8A8_UNORM));
+        info("is_depth/stencil/compressed predicates OK");
+
+        // format_block_extent
+        assert_eq!(ignis::format_block_extent(vk::Format::BC7_UNORM_BLOCK), (4, 4));
+        assert_eq!(ignis::format_block_extent(vk::Format::R8G8B8A8_UNORM), (1, 1));
+        info("format_block_extent OK");
+
+        // dispatch_size
+        assert_eq!(ignis::dispatch_size(1000, 64), 16);
+        assert_eq!(ignis::dispatch_size(64, 64), 1);
+        assert_eq!(ignis::dispatch_size(65, 64), 2);
+        assert_eq!(ignis::dispatch_size(0, 64), 0);
+        info("dispatch_size: 4 cases OK");
+
+        // dispatch_size_3d
+        let groups = ignis::dispatch_size_3d([1920, 1080, 1], [8, 8, 1]);
+        assert_eq!(groups, [240, 135, 1]);
+        info(&format!("dispatch_size_3d([1920,1080,1], [8,8,1]) = {:?}", groups));
+
+        // mip_levels_for_size
+        assert_eq!(ignis::mip_levels_for_size(256, 256), 9);
+        assert_eq!(ignis::mip_levels_for_size(1, 1), 1);
+        assert_eq!(ignis::mip_levels_for_size(1024, 512), 11);
+        assert_eq!(ignis::mip_levels_for_size(4096, 4096), 13);
+        info("mip_levels_for_size: 4 cases OK");
+    }
+    passed += 1;
+    ok();
+
+    // Step 35: Pipeline layout builder.
+    step(35, "Pipeline layout builder");
+    {
+        // Empty layout (no sets, no push constants).
+        let empty_layout = ctx.pipeline_layout_builder().build()?;
+        assert_ne!(empty_layout.handle(), vk::PipelineLayout::null());
+        info(&format!("empty layout: {:?}", empty_layout.handle()));
+
+        // Layout with push constants.
+        let push_layout = ctx
+            .pipeline_layout_builder()
+            .push_constant_range(vk::ShaderStageFlags::VERTEX, 0, 64)
+            .push_constant_range(vk::ShaderStageFlags::FRAGMENT, 64, 16)
+            .build()?;
+        info(&format!("push-only layout: {:?}", push_layout.handle()));
+
+        // Use in a compute pipeline.
+        let cs = ctx.create_shader_module(EMPTY_COMPUTE_SPV)?;
+        let pipeline = ctx
+            .compute_pipeline_builder()
+            .shader(cs.handle(), "main")
+            .layout(empty_layout.handle())
+            .build()?;
+        info(&format!("compute pipeline with builder layout: {:?}", pipeline));
+        unsafe { ctx.device().destroy_pipeline(pipeline, None) };
+
+        // RAII: layouts drop here, no manual cleanup needed.
+        drop(push_layout);
+        drop(empty_layout);
+        info("RAII cleanup on drop OK");
+    }
+    passed += 1;
+    ok();
+
+    // Step 36: Pipeline cache persistence.
+    step(36, "Pipeline cache persistence");
+    {
+        let cache_path = "test_pipeline_cache.bin";
+
+        // Create empty cache.
+        let cache = ctx.create_pipeline_cache()?;
+        assert_ne!(cache.handle(), vk::PipelineCache::null());
+        info("empty cache created");
+
+        // Build a pipeline with the cache.
+        let cs = ctx.create_shader_module(EMPTY_COMPUTE_SPV)?;
+        let layout = ctx.pipeline_layout_builder().build()?;
+        let pipeline = ctx
+            .compute_pipeline_builder()
+            .shader(cs.handle(), "main")
+            .layout(layout.handle())
+            .cache(cache.handle())
+            .build()?;
+        info("pipeline built with cache");
+        unsafe { ctx.device().destroy_pipeline(pipeline, None) };
+
+        // Save to disk.
+        cache.save(cache_path)?;
+        let file_size = std::fs::metadata(cache_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
+        info(&format!("saved to disk: {} bytes", file_size));
+
+        // Load from disk.
+        let cache2 = ctx.create_pipeline_cache_from_file(cache_path)?;
+        info("loaded from disk");
+
+        // Merge.
+        cache.merge(&cache2)?;
+        info("merge OK");
+
+        // Cleanup file.
+        let _ = std::fs::remove_file(cache_path);
+        info("temp file cleaned up");
+    }
+    passed += 1;
+    ok();
+
+    // Step 37: Staging ring buffer and frame allocator.
+    step(37, "Staging ring buffer + frame allocator");
+    {
+        // Staging ring.
+        let mut ring = ctx.create_staging_ring(64 * 1024, 2)?;
+        info(&format!("staging ring: {}B per frame", ring.frame_capacity()));
+
+        ring.begin_frame()?;
+        let data = [0xAAu8; 256];
+        let region = ring.push(&data)?;
+        assert_eq!(region.size, 256);
+        assert_ne!(region.buffer, vk::Buffer::null());
+        info(&format!(
+            "pushed 256B -> buffer={:?} offset={} remaining={}",
+            region.buffer,
+            region.offset,
+            ring.remaining()
+        ));
+
+        // Push more to verify cursor advances.
+        let region2 = ring.push(&[0xBB; 128])?;
+        assert!(region2.offset > region.offset);
+        info(&format!("second push at offset={}", region2.offset));
+
+        // Advance frame.
+        ring.begin_frame()?;
+        let region3 = ring.push(&[0xCC; 64])?;
+        // New frame, cursor reset — offset should be small.
+        assert!(region3.offset < 128);
+        info("frame advance + cursor reset OK");
+
+        // Frame allocator.
+        let mut frame_alloc = ctx.create_frame_allocator(
+            32 * 1024,
+            2,
+            vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::VERTEX_BUFFER,
+        )?;
+        assert_ne!(frame_alloc.buffer(), vk::Buffer::null());
+        info(&format!("frame allocator buffer: {:?}", frame_alloc.buffer()));
+
+        frame_alloc.advance();
+        let (offset1, ptr1) = frame_alloc.push_bytes(256, 256)?;
+        assert_eq!(offset1 % 256, 0);
+        assert!(!ptr1.is_null());
+        info(&format!("push_bytes(256, align=256) -> offset={offset1}"));
+
+        let (offset2, _) = frame_alloc.push_bytes(64, 16)?;
+        assert!(offset2 >= offset1 + 256);
+        info(&format!("push_bytes(64, align=16) -> offset={offset2}"));
+
+        // Push typed value.
+        frame_alloc.advance();
+        let val: [f32; 4] = [1.0, 2.0, 3.0, 4.0];
+        let offset = unsafe { frame_alloc.push(&val)? };
+        assert_eq!(offset % 4, 0); // f32 alignment
+        info(&format!("push<[f32;4]> -> offset={offset}"));
+
+        info(&format!("remaining: {} bytes", frame_alloc.remaining()));
+    }
+    passed += 1;
+    ok();
+
+    // Step 38: Typed buffer.
+    step(38, "Typed buffer");
+    {
+        #[repr(C)]
+        #[derive(Copy, Clone, Debug, PartialEq)]
+        struct Vertex {
+            pos: [f32; 3],
+            uv: [f32; 2],
+        }
+
+        let buf: ignis::TypedBuffer<Vertex> = ctx.create_typed_buffer(
+            64,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            ignis::MemoryLocation::CpuToGpu,
+        )?;
+        assert_eq!(buf.element_count(), 64);
+        assert_eq!(
+            buf.byte_size(),
+            (64 * std::mem::size_of::<Vertex>()) as u64
+        );
+        info(&format!(
+            "TypedBuffer<Vertex>: {} elements, {} bytes",
+            buf.element_count(),
+            buf.byte_size()
+        ));
+
+        // Write and read single element.
+        let v0 = Vertex {
+            pos: [1.0, 2.0, 3.0],
+            uv: [0.5, 0.5],
+        };
+        buf.write(0, &v0);
+        let readback = buf.read(0);
+        assert_eq!(readback, v0);
+        info("write + read single element OK");
+
+        // Write slice.
+        let vertices = [
+            Vertex { pos: [0.0, 0.0, 0.0], uv: [0.0, 0.0] },
+            Vertex { pos: [1.0, 0.0, 0.0], uv: [1.0, 0.0] },
+            Vertex { pos: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
+        ];
+        buf.write_slice(10, &vertices);
+        assert_eq!(buf.read(10), vertices[0]);
+        assert_eq!(buf.read(11), vertices[1]);
+        assert_eq!(buf.read(12), vertices[2]);
+        info("write_slice + read 3 elements OK");
+
+        // Bounds check.
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            buf.write(64, &v0); // index == element_count -> OOB
+        }));
+        assert!(caught.is_err(), "OOB write must panic");
+        info("out-of-bounds write correctly panics");
+
+        assert_ne!(buf.handle(), vk::Buffer::null());
+        info(&format!("underlying buffer: {:?}", buf.handle()));
+    }
+    passed += 1;
+    ok();
+
+    // Step 39: Fence pool.
+    step(39, "Fence pool");
+    {
+        let fence_pool = ctx.create_fence_pool();
+        assert_eq!(fence_pool.available_count(), 0);
+        info("empty pool created");
+
+        // Acquire 3 fences.
+        let f1 = fence_pool.acquire()?;
+        let f2 = fence_pool.acquire()?;
+        let f3 = fence_pool.acquire()?;
+        assert_ne!(f1, vk::Fence::null());
+        assert_ne!(f2, vk::Fence::null());
+        assert_ne!(f3, vk::Fence::null());
+        info("acquired 3 fences");
+
+        // Submit with one, wait, release.
+        let cmd = record_empty(&pool)?;
+        let cmds = [cmd];
+        let submits = [vk::SubmitInfo::default().command_buffers(&cmds)];
+        unsafe { gfx_queue.submit_raw(&submits, f1)? };
+        unsafe { ctx.device().wait_for_fences(&[f1], true, u64::MAX)? };
+        fence_pool.release(f1)?;
+        assert_eq!(fence_pool.available_count(), 1);
+        info("submit + wait + release -> pool has 1");
+
+        // Release the other two (they were never submitted, signal them first).
+        let fence_ci = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+        // f2 and f3 were created unsignaled and never submitted.
+        // We can't release them without resetting (which release does).
+        // But release calls reset, which requires the fence to be either
+        // signaled or never submitted. Actually, vkResetFences works on
+        // unsignaled fences too (it's a no-op if already unsignaled).
+        // Wait — release calls reset, and reset on an unsignaled fence
+        // that was never submitted is valid per the spec.
+        fence_pool.release(f2)?;
+        fence_pool.release(f3)?;
+        assert_eq!(fence_pool.available_count(), 3);
+        info("released all 3, pool has 3");
+
+        // Re-acquire: should reuse.
+        let f_reused = fence_pool.acquire()?;
+        assert_eq!(fence_pool.available_count(), 2);
+        fence_pool.release(f_reused)?;
+        info("re-acquire reuses pooled fence OK");
+    }
+    passed += 1;
+    ok();
+
+    // Step 40: Error context (WithContext trait).
+    step(40, "Error context enrichment");
+    {
+        use ignis::WithContext;
+
+        // Wrap a known error with context.
+        let base_err: ignis::Result<()> = Err(ignis::Error::NoSuitableMemoryType);
+        let enriched = base_err.context("allocating shadow map buffer");
+        match enriched {
+            Err(ref e) => {
+                let msg = format!("{e}");
+                assert!(msg.contains("no suitable memory type"), "base error present");
+                assert!(
+                    msg.contains("shadow map buffer"),
+                    "context present in display"
+                );
+                info(&format!("enriched error: {e}"));
+            }
+            Ok(()) => panic!("expected error"),
+        }
+
+        // with_context (lazy).
+        let base_err2: ignis::Result<()> = Err(ignis::Error::Timeout);
+        let enriched2 = base_err2.with_context(|| format!("waiting for frame {}", 42));
+        match enriched2 {
+            Err(ref e) => {
+                let msg = format!("{e}");
+                assert!(msg.contains("frame 42"));
+                info(&format!("lazy context: {e}"));
+            }
+            Ok(()) => panic!("expected error"),
+        }
+
+        // Ok path: context is a no-op.
+        let ok_result: ignis::Result<u32> = Ok(42);
+        let still_ok = ok_result.context("this should not appear");
+        assert_eq!(still_ok.unwrap(), 42);
+        info("Ok path passes through unchanged");
+    }
+    passed += 1;
+    ok();
+
+// Step 41: Debug utils + GPU profiler.
+    step(41, "Debug utils + GPU profiler");
+    {
+        // Debug utils: name objects.
+        let dbg = ctx.create_debug_utils();
+
+        let test_buf = ctx.create_buffer(&ignis::BufferInfo {
+            size: 64,
+            usage: vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
+            location: ignis::MemoryLocation::CpuToGpu,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
+        })?;
+        dbg.set_object_name(
+            ctx.device(),
+            vk::ObjectType::BUFFER,
+            ash::vk::Handle::as_raw(test_buf.handle()),
+            "profiler_test_buffer",
+        );
+        info("named buffer via debug utils");
+
+        // Command buffer labels.
+        let prof_pool = ctx.create_command_pool(ignis::QueueType::Graphics)?;
+        let cmd = prof_pool.allocate_primary()?;
+        let rec = prof_pool.begin_primary(cmd)?;
+
+        dbg.cmd_begin_label(&rec, "test_label_region", [0.2, 0.8, 0.2, 1.0]);
+        dbg.cmd_insert_label(&rec, "marker_point", [1.0, 1.0, 0.0, 1.0]);
+        dbg.cmd_end_label(&rec);
+        let cmd = rec.end()?;
+        gfx_queue.submit_simple(cmd)?.wait()?;
+        info("cmd_begin_label + cmd_insert_label + cmd_end_label OK");
+
+        // GPU profiler: create a real compute pipeline for dispatch.
+        let prof_cs = ctx.create_shader_module(EMPTY_COMPUTE_SPV)?;
+        let prof_layout_ci = vk::PipelineLayoutCreateInfo::default();
+        let prof_layout = unsafe { ctx.device().create_pipeline_layout(&prof_layout_ci, None)? };
+        let prof_pipeline = ctx
+            .compute_pipeline_builder()
+            .shader(prof_cs.handle(), "main")
+            .layout(prof_layout)
+            .build()?;
+
+        let mut profiler = ctx.create_gpu_profiler(64)?;
+        let cmd = prof_pool.allocate_primary()?;
+        let rec = prof_pool.begin_primary(cmd)?;
+
+        profiler.reset(&rec);
+
+        // Scope A: compute dispatch with a bound pipeline.
+        let scope_a = profiler.begin_scope(&rec, "compute_dispatch");
+        rec.bind_pipeline(vk::PipelineBindPoint::COMPUTE, prof_pipeline);
+        rec.dispatch(1, 1, 1);
+        profiler.end_scope(&rec, scope_a);
+
+        // Scope B: buffer copy (no pipeline needed).
+        let scope_b = profiler.begin_scope(&rec, "buffer_copy");
+        rec.copy_buffer(
+            test_buf.handle(),
+            test_buf.handle(),
+            &[vk::BufferCopy {
+                src_offset: 0,
+                dst_offset: 32,
+                size: 16,
+            }],
+        );
+        profiler.end_scope(&rec, scope_b);
+
+        let cmd = rec.end()?;
+        gfx_queue.submit_simple(cmd)?.wait()?;
+
+        let results = profiler.readback()?;
+        assert_eq!(results.len(), 2);
+        info(&format!("profiler readback: {} scopes", results.len()));
+        for r in &results {
+            assert!(r.elapsed_ms >= 0.0, "timing must be non-negative");
+            info(&format!(
+                "  \"{}\": {:.4}ms ({} ns, ticks {}..{})",
+                r.label, r.elapsed_ms, r.elapsed_ns, r.begin_tick, r.end_tick,
+            ));
+        }
+
+        // Verify ordering: scope_b begins after scope_a.
+        assert!(
+            results[1].begin_tick >= results[0].end_tick,
+            "scope B should start after scope A ends"
+        );
+        info("scope ordering verified (B starts after A)");
+
+        // Cleanup.
+        unsafe {
+            ctx.device().destroy_pipeline(prof_pipeline, None);
+            ctx.device().destroy_pipeline_layout(prof_layout, None);
+        }
     }
     passed += 1;
     ok();

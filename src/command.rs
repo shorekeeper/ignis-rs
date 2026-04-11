@@ -873,6 +873,169 @@ impl CommandRecorder<'_> {
         }
     }
 
+    /// Copy regions between images.
+    pub fn copy_image(
+        &self,
+        src: vk::Image,
+        src_layout: vk::ImageLayout,
+        dst: vk::Image,
+        dst_layout: vk::ImageLayout,
+        regions: &[vk::ImageCopy],
+    ) {
+        unsafe {
+            self.device
+                .cmd_copy_image(self.buffer, src, src_layout, dst, dst_layout, regions);
+        }
+    }
+
+    /// Blit (scaled copy) regions between images.
+    pub fn blit_image(
+        &self,
+        src: vk::Image,
+        src_layout: vk::ImageLayout,
+        dst: vk::Image,
+        dst_layout: vk::ImageLayout,
+        regions: &[vk::ImageBlit],
+        filter: vk::Filter,
+    ) {
+        unsafe {
+            self.device.cmd_blit_image(
+                self.buffer, src, src_layout, dst, dst_layout, regions, filter,
+            );
+        }
+    }
+
+    /// Clear a color image to a uniform value.
+    pub fn clear_color_image(
+        &self,
+        image: vk::Image,
+        layout: vk::ImageLayout,
+        color: &vk::ClearColorValue,
+        ranges: &[vk::ImageSubresourceRange],
+    ) {
+        unsafe {
+            self.device
+                .cmd_clear_color_image(self.buffer, image, layout, color, ranges);
+        }
+    }
+
+    /// Clear a depth/stencil image.
+    pub fn clear_depth_stencil_image(
+        &self,
+        image: vk::Image,
+        layout: vk::ImageLayout,
+        value: &vk::ClearDepthStencilValue,
+        ranges: &[vk::ImageSubresourceRange],
+    ) {
+        unsafe {
+            self.device
+                .cmd_clear_depth_stencil_image(self.buffer, image, layout, value, ranges);
+        }
+    }
+
+    /// Fill a buffer region with a 32-bit value.
+    pub fn fill_buffer(
+        &self,
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        size: vk::DeviceSize,
+        data: u32,
+    ) {
+        unsafe {
+            self.device
+                .cmd_fill_buffer(self.buffer, buffer, offset, size, data);
+        }
+    }
+
+    /// Update a buffer region with inline data (max 65536 bytes).
+    pub fn update_buffer(&self, buffer: vk::Buffer, offset: vk::DeviceSize, data: &[u8]) {
+        unsafe {
+            self.device
+                .cmd_update_buffer(self.buffer, buffer, offset, data);
+        }
+    }
+
+    /// Draw primitives with indirect parameters from a buffer.
+    pub fn draw_indirect(
+        &self,
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        draw_count: u32,
+        stride: u32,
+    ) {
+        unsafe {
+            self.device
+                .cmd_draw_indirect(self.buffer, buffer, offset, draw_count, stride);
+        }
+    }
+
+    /// Draw indexed primitives with indirect parameters from a buffer.
+    pub fn draw_indexed_indirect(
+        &self,
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        draw_count: u32,
+        stride: u32,
+    ) {
+        unsafe {
+            self.device
+                .cmd_draw_indexed_indirect(self.buffer, buffer, offset, draw_count, stride);
+        }
+    }
+
+    /// Dispatch compute with indirect parameters from a buffer.
+    pub fn dispatch_indirect(&self, buffer: vk::Buffer, offset: vk::DeviceSize) {
+        unsafe {
+            self.device
+                .cmd_dispatch_indirect(self.buffer, buffer, offset);
+        }
+    }
+
+    /// Set line width dynamically.
+    pub fn set_line_width(&self, width: f32) {
+        unsafe {
+            self.device.cmd_set_line_width(self.buffer, width);
+        }
+    }
+
+    /// Set depth bias dynamically.
+    pub fn set_depth_bias(&self, constant_factor: f32, clamp: f32, slope_factor: f32) {
+        unsafe {
+            self.device
+                .cmd_set_depth_bias(self.buffer, constant_factor, clamp, slope_factor);
+        }
+    }
+
+    /// Set blend constants dynamically.
+    pub fn set_blend_constants(&self, constants: &[f32; 4]) {
+        unsafe {
+            self.device
+                .cmd_set_blend_constants(self.buffer, constants);
+        }
+    }
+
+    /// Set depth bounds dynamically.
+    pub fn set_depth_bounds(&self, min: f32, max: f32) {
+        unsafe {
+            self.device.cmd_set_depth_bounds(self.buffer, min, max);
+        }
+    }
+
+    /// Copy data from an image to a buffer.
+    pub fn copy_image_to_buffer(
+        &self,
+        src_image: vk::Image,
+        src_layout: vk::ImageLayout,
+        dst_buffer: vk::Buffer,
+        regions: &[vk::BufferImageCopy],
+    ) {
+        unsafe {
+            self.device.cmd_copy_image_to_buffer(
+                self.buffer, src_image, src_layout, dst_buffer, regions,
+            );
+        }
+    }
+
     /// Trace rays using a ray tracing pipeline.
     ///
     /// Requires a ray tracing pipeline to be bound and the

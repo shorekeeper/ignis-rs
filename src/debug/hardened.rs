@@ -592,46 +592,72 @@ impl HardenedAllocator {
 
     /// Dump a human-readable report to stderr.
     pub fn dump_report(&self) {
+        let s = diagnostic::Style::detect();
         let stats = &self.stats;
         let meta_count = self.metadata.lock().unwrap().len();
         let q_len = self.quarantine.lock().unwrap().len();
 
-        eprintln!("=== Ignis Hardened Allocator Report ===");
-        eprintln!("Inner allocator: {}", self.inner.name());
-        eprintln!("Guard size: {} bytes", self.config.guard_size);
-        eprintln!(
-            "Quarantine capacity: {} bytes",
-            self.config.quarantine_max_bytes
+        let mut o = String::with_capacity(2048);
+
+        diagnostic::write_header(
+            &mut o, &s, &diagnostic::Severity::Info,
+            "IGN-H006", "hardened allocator report",
         );
-        eprintln!("Canary secret: {:016X}", self.canary_secret);
-        eprintln!("---");
-        eprintln!(
-            "Total allocs: {}",
-            stats.total_allocs.load(Ordering::Relaxed)
-        );
-        eprintln!("Total frees: {}", stats.total_frees.load(Ordering::Relaxed));
-        eprintln!(
-            "Active: {} allocs, {} bytes",
-            stats.active_allocs.load(Ordering::Relaxed),
-            stats.active_bytes.load(Ordering::Relaxed)
-        );
-        eprintln!(
-            "Peak: {} allocs, {} bytes",
-            stats.peak_allocs.load(Ordering::Relaxed),
-            stats.peak_bytes.load(Ordering::Relaxed)
-        );
-        eprintln!(
-            "Quarantine: {} entries, {} bytes",
-            stats.quarantine_entries.load(Ordering::Relaxed),
-            stats.quarantine_bytes.load(Ordering::Relaxed)
-        );
-        eprintln!(
-            "Corruptions detected: {}",
-            stats.corruptions_detected.load(Ordering::Relaxed)
-        );
-        eprintln!("Live metadata entries: {meta_count}");
-        eprintln!("Quarantine queue length: {q_len}");
-        eprintln!("=== End Report ===");
+        diagnostic::write_pipe_empty(&mut o, &s);
+
+        diagnostic::write_section(&mut o, &s, "Configuration");
+        diagnostic::write_kv(&mut o, &s, "Inner allocator", self.inner.name());
+        diagnostic::write_kv(&mut o, &s, "Guard size", &format!("{} bytes", self.config.guard_size));
+        diagnostic::write_kv(&mut o, &s, "Quarantine capacity", &diagnostic::format_bytes(self.config.quarantine_max_bytes));
+        diagnostic::write_kv(&mut o, &s, "Fill on alloc", &match self.config.fill_on_alloc {
+            Some(p) => format!("{p:#04x}"),
+            None => "disabled".into(),
+        });
+        diagnostic::write_kv(&mut o, &s, "Free pattern", &format!("{:?}", self.config.free_pattern));
+        diagnostic::write_kv(&mut o, &s, "Paranoid verify", &format!("{}", self.config.paranoid_verify));
+
+        diagnostic::write_section(&mut o, &s, "Statistics");
+        diagnostic::write_kv(&mut o, &s, "Total allocs", &stats.total_allocs.load(Ordering::Relaxed).to_string());
+        diagnostic::write_kv(&mut o, &s, "Total frees", &stats.total_frees.load(Ordering::Relaxed).to_string());
+
+        let active = stats.active_allocs.load(Ordering::Relaxed);
+        let active_bytes = stats.active_bytes.load(Ordering::Relaxed);
+        diagnostic::write_kv(&mut o, &s, "Active", &format!("{active} allocs, {}", diagnostic::format_bytes(active_bytes)));
+
+        let peak = stats.peak_allocs.load(Ordering::Relaxed);
+        let peak_bytes = stats.peak_bytes.load(Ordering::Relaxed);
+        diagnostic::write_kv(&mut o, &s, "Peak", &format!("{peak} allocs, {}", diagnostic::format_bytes(peak_bytes)));
+
+        let q_entries = stats.quarantine_entries.load(Ordering::Relaxed);
+        let q_bytes = stats.quarantine_bytes.load(Ordering::Relaxed);
+        diagnostic::write_kv(&mut o, &s, "Quarantine", &format!("{q_entries} entries, {}", diagnostic::format_bytes(q_bytes)));
+
+        // Quarantine utilization bar
+        if self.config.quarantine_max_bytes > 0 {
+            let q_frac = q_bytes as f64 / self.config.quarantine_max_bytes as f64;
+            let bar = diagnostic::render_mini_bar(q_frac, 20, &s);
+            diagnostic::write_pipe_raw(&mut o, &s, &format!("  quarantine fill: {bar} {:.1}%", q_frac * 100.0));
+        }
+
+        let corruptions = stats.corruptions_detected.load(Ordering::Relaxed);
+        if corruptions > 0 {
+            diagnostic::write_pipe_empty(&mut o, &s);
+            diagnostic::write_pipe_raw(&mut o, &s, &s.bold_red(&format!(
+                "  ⚠ {corruptions} corruption(s) detected during this session"
+            )));
+        } else {
+            diagnostic::write_pipe_empty(&mut o, &s);
+            diagnostic::write_pipe_raw(&mut o, &s, &s.bold_green(
+                "  ✓ 0 corruptions detected"
+            ));
+        }
+
+        diagnostic::write_pipe_empty(&mut o, &s);
+        diagnostic::write_kv(&mut o, &s, "Live metadata entries", &meta_count.to_string());
+        diagnostic::write_kv(&mut o, &s, "Quarantine queue length", &q_len.to_string());
+
+        diagnostic::write_diagnostic_end(&mut o, &s, &diagnostic::Severity::Info);
+        eprint!("{o}");
     }
 
     /// Manually verify canaries for all live allocations.
@@ -768,7 +794,6 @@ impl HardenedAllocator {
             formatted,
         }
     }
-
     /// Dispatch a corruption event to the configured action.
     fn dispatch_corruption(&self, event: &CorruptionEvent) {
         self.stats

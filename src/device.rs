@@ -270,13 +270,34 @@ pub(crate) fn create_managed_device(
         .engine_version(vk::make_api_version(0, 0, 1, 0))
         .api_version(config.vulkan_version);
 
-    let inst_ext_ptrs: Vec<*const c_char> = config
+    #[allow(unused_mut)]
+    let mut inst_ext_ptrs: Vec<*const c_char> = config
         .instance_extensions
         .iter()
         .map(|s| s.as_ptr())
         .chain(cfg_macos_instance_extensions())
         .collect();
 
+    // Auto-enable VK_EXT_debug_utils when debug-tools feature is active.
+    #[cfg(feature = "debug-tools")]
+    {
+        let available_extensions = unsafe {
+            entry.enumerate_instance_extension_properties(None)
+        };
+        if let Ok(props) = available_extensions {
+            let has_debug_utils = props.iter().any(|p| {
+                let name = unsafe { CStr::from_ptr(p.extension_name.as_ptr()) };
+                name == ash::ext::debug_utils::NAME
+            });
+            if has_debug_utils {
+                let ptr = ash::ext::debug_utils::NAME.as_ptr();
+                if !inst_ext_ptrs.contains(&ptr) {
+                    inst_ext_ptrs.push(ptr);
+                }
+            }
+        }
+    }
+    
     let mut layer_ptrs: Vec<*const c_char> = Vec::new();
     let validation_layer =
         unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };

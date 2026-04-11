@@ -49,3 +49,9 @@ pub mod descriptor_audit;
 
 /// Pipeline compatibility checker (layout mismatches).
 pub mod pipeline_audit;
+
+/// `VK_EXT_debug_utils` integration for object naming and command labels.
+pub mod debug_utils;
+
+/// GPU timestamp profiler with query pool management.
+pub mod profiler;

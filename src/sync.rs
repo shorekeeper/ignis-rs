@@ -217,3 +217,72 @@ impl FrameContext {
         self.render_finished
     }
 }
+
+/// Reusable fence pool to avoid per-submission `vkCreateFence`/`vkDestroyFence`.
+///
+/// Fences are reset when released back to the pool, ready for immediate reuse.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use ignis::*; use ash::vk;
+/// # fn example(ignis: &Ignis) -> Result<()> {
+/// let pool = ignis.create_fence_pool();
+/// let fence = pool.acquire()?;
+/// // ... submit with fence ...
+/// // ... wait for fence ...
+/// pool.release(fence)?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct FencePool {
+    shared: Arc<SharedState>,
+    available: std::sync::Mutex<Vec<vk::Fence>>,
+}
+
+impl FencePool {
+    /// Create a new, empty fence pool.
+    pub fn new(shared: Arc<SharedState>) -> Self {
+        Self {
+            shared,
+            available: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Acquire a fence from the pool, creating a new one if empty.
+    ///
+    /// The fence is returned in the unsignaled state.
+    pub fn acquire(&self) -> Result<vk::Fence> {
+        let mut pool = self.available.lock().unwrap();
+        if let Some(fence) = pool.pop() {
+            Ok(fence)
+        } else {
+            let ci = vk::FenceCreateInfo::default();
+            let fence = unsafe { self.shared.device.create_fence(&ci, None)? };
+            Ok(fence)
+        }
+    }
+
+    /// Release a signaled fence back to the pool.
+    ///
+    /// The fence is reset to unsignaled before being added to the pool.
+    pub fn release(&self, fence: vk::Fence) -> Result<()> {
+        unsafe { self.shared.device.reset_fences(&[fence])? };
+        self.available.lock().unwrap().push(fence);
+        Ok(())
+    }
+
+    /// Number of fences currently available in the pool.
+    pub fn available_count(&self) -> usize {
+        self.available.lock().unwrap().len()
+    }
+}
+
+impl Drop for FencePool {
+    fn drop(&mut self) {
+        let pool = self.available.get_mut().unwrap();
+        for &fence in pool.iter() {
+            unsafe { self.shared.device.destroy_fence(fence, None) };
+        }
+    }
+}

@@ -190,12 +190,22 @@ fn format_journal_dump(
     error: Option<vk::Result>,
 ) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(256 + entries.len() * 256);
+    let mut o = String::with_capacity(512 + entries.len() * 256);
 
     let (code, msg) = if let Some(e) = error {
-        ("IGN-J001", format!("{e:?} - submission journal dump"))
+        (
+            "IGN-J001",
+            format!(
+                "{} — submission journal dump ({} entries)",
+                diagnostic::vk_result_name(e),
+                entries.len()
+            ),
+        )
     } else {
-        ("IGN-J002", "submission journal dump".to_string())
+        (
+            "IGN-J002",
+            format!("submission journal dump ({} entries)", entries.len()),
+        )
     };
 
     let sev = if error.is_some() {
@@ -204,25 +214,46 @@ fn format_journal_dump(
         Severity::Info
     };
 
-    diagnostic::write_header(&mut o, &s, &sev, code, &msg);
-    diagnostic::write_location(&mut o, &s, &format!("{} entries", entries.len()));
+    if error.is_some() {
+        diagnostic::write_full_diagnostic(&mut o, &s, &sev, code, &msg, true, false);
+    } else {
+        diagnostic::write_header(&mut o, &s, &sev, code, &msg);
+    }
     diagnostic::write_pipe_empty(&mut o, &s);
 
+    // Stats summary
+    let pending = entries.iter().filter(|e| e.status() == EntryStatus::Pending).count();
+    let completed = entries.iter().filter(|e| e.status() == EntryStatus::Completed).count();
+    let errored = entries.iter().filter(|e| e.status() == EntryStatus::Error).count();
+
+    diagnostic::write_pipe(
+        &mut o,
+        &s,
+        &format!(
+            "status: {} completed, {} pending, {} error",
+            s.green(&completed.to_string()),
+            s.bold_yellow(&pending.to_string()),
+            if errored > 0 { s.bold_red(&errored.to_string()) } else { "0".to_string() },
+        ),
+    );
+    diagnostic::write_pipe_empty(&mut o, &s);
+
+    // Entry listing
     for entry in entries {
         let offset = entry.timestamp.duration_since(*base_time);
         let t = diagnostic::format_duration(offset);
 
         let status_str = match entry.status() {
-            EntryStatus::Pending => s.bold_yellow("PENDING"),
-            EntryStatus::Completed => s.green("OK"),
+            EntryStatus::Pending => s.bold_yellow("⏳ PENDING"),
+            EntryStatus::Completed => s.green("✓ OK"),
             EntryStatus::Error => {
                 let code = entry
                     .error_code
                     .lock()
                     .unwrap()
-                    .map(|e| format!("{e:?}"))
+                    .map(|e| diagnostic::vk_result_name(e).to_string())
                     .unwrap_or_else(|| "unknown".to_string());
-                s.bold_red(&format!("ERROR({code})"))
+                s.bold_red(&format!("✗ ERROR({code})"))
             }
         };
 
@@ -231,11 +262,18 @@ fn format_journal_dump(
             &s,
             &format!(
                 "T+{:<12} #{:<4} Queue[{},{}]  \"{}\"  {}",
-                t, entry.sequence, entry.queue_family, entry.queue_index, entry.label, status_str,
+                t,
+                entry.sequence,
+                entry.queue_family,
+                entry.queue_index,
+                entry.label,
+                status_str,
             ),
         );
 
-        if !entry.command_buffers.is_empty() || !entry.wait_semaphores.is_empty() {
+        if !entry.command_buffers.is_empty()
+            || !entry.wait_semaphores.is_empty()
+        {
             let cmds = entry.command_buffers.len();
             let waits = entry.wait_semaphores.len();
             let sigs = entry.signal_semaphores.len();
@@ -253,13 +291,22 @@ fn format_journal_dump(
     diagnostic::write_pipe_empty(&mut o, &s);
 
     if error.is_some() {
+        diagnostic::write_note(
+            &mut o,
+            &s,
+            "PENDING entries at time of error were in-flight on the GPU\n\
+             these submissions may have caused or been affected by the error",
+        );
         diagnostic::write_help(
             &mut o,
             &s,
             "device lost often indicates GPU memory corruption,\n\
-             shader infinite loop, or driver bug",
+             shader infinite loop, or driver bug\n\
+             check the last PENDING submission for problematic shaders or resources",
         );
     }
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &sev);
 
     o
 }

@@ -5,6 +5,19 @@
 //! are stored as raw `VkShaderModule` handles; the caller is responsible
 //! for keeping the modules alive until the pipeline is built.
 //!
+//! # Specialization Constants
+//!
+//! All pipeline builders support specialization constants via the
+//! `.specialization()` method. This sets per-stage constant data that
+//! is baked into the pipeline at creation time, enabling shader
+//! permutations without recompilation.
+//!
+//! # Pipeline Layout
+//!
+//! [`PipelineLayoutBuilder`] provides an ergonomic way to construct
+//! `VkPipelineLayout` objects with RAII cleanup, matching the builder
+//! pattern used by render passes and pipelines.
+//!
 //! # Ray Tracing
 //!
 //! The [`RayTracingPipelineBuilder`] and [`RayTracingPipeline`] provide
@@ -27,12 +40,15 @@ fn align_up(value: u64, alignment: u64) -> u64 {
 
 /// A shader stage configuration for pipeline builders.
 ///
-/// Owns the entry point name so it can outlive the builder method call.
+/// Owns the entry point name and optional specialization data so they
+/// can outlive the builder method call.
 #[derive(Clone)]
 pub(crate) struct ShaderStageConfig {
     pub stage: vk::ShaderStageFlags,
     pub module: vk::ShaderModule,
     pub entry_point: CString,
+    pub specialization_data: Option<Vec<u8>>,
+    pub specialization_map: Vec<vk::SpecializationMapEntry>,
 }
 
 /// Builder for a graphics pipeline.
@@ -109,7 +125,44 @@ impl GraphicsPipelineBuilder {
             stage,
             module,
             entry_point: CString::new(entry_point).unwrap(),
+            specialization_data: None,
+            specialization_map: Vec::new(),
         });
+        self
+    }
+
+    /// Set specialization constant data for the last added shader stage.
+    ///
+    /// `map_entries` describes the layout of `data`. Each entry maps
+    /// a constant ID to an offset and size within `data`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use ignis::*; use ash::vk;
+    /// # fn example(builder: GraphicsPipelineBuilder,
+    /// #            vs: vk::ShaderModule) -> GraphicsPipelineBuilder {
+    /// builder
+    ///     .shader_stage(vk::ShaderStageFlags::VERTEX, vs, "main")
+    ///     .specialization(
+    ///         &[vk::SpecializationMapEntry {
+    ///             constant_id: 0,
+    ///             offset: 0,
+    ///             size: 4,
+    ///         }],
+    ///         &42u32.to_ne_bytes(),
+    ///     )
+    /// # }
+    /// ```
+    pub fn specialization(
+        mut self,
+        map_entries: &[vk::SpecializationMapEntry],
+        data: &[u8],
+    ) -> Self {
+        if let Some(last) = self.stages.last_mut() {
+            last.specialization_map = map_entries.to_vec();
+            last.specialization_data = Some(data.to_vec());
+        }
         self
     }
 
@@ -230,15 +283,33 @@ impl GraphicsPipelineBuilder {
             ));
         }
 
-        // Build shader stage create infos (referencing owned CStrings).
-        let stage_infos: Vec<vk::PipelineShaderStageCreateInfo<'_>> = self
+        // Build specialization infos. These must live until create_graphics_pipelines returns.
+        let spec_infos: Vec<Option<vk::SpecializationInfo<'_>>> = self
             .stages
             .iter()
             .map(|s| {
-                vk::PipelineShaderStageCreateInfo::default()
+                s.specialization_data.as_ref().map(|data| {
+                    vk::SpecializationInfo::default()
+                        .map_entries(&s.specialization_map)
+                        .data(data)
+                })
+            })
+            .collect();
+
+        // Build shader stage create infos (referencing owned CStrings and spec infos).
+        let stage_infos: Vec<vk::PipelineShaderStageCreateInfo<'_>> = self
+            .stages
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let mut info = vk::PipelineShaderStageCreateInfo::default()
                     .stage(s.stage)
                     .module(s.module)
-                    .name(&s.entry_point)
+                    .name(&s.entry_point);
+                if let Some(ref spec) = spec_infos[i] {
+                    info = info.specialization_info(spec);
+                }
+                info
             })
             .collect();
 
@@ -333,7 +404,50 @@ impl ComputePipelineBuilder {
             stage: vk::ShaderStageFlags::COMPUTE,
             module,
             entry_point: CString::new(entry_point).unwrap(),
+            specialization_data: None,
+            specialization_map: Vec::new(),
         });
+        self
+    }
+
+    /// Set specialization constants for the compute shader.
+    ///
+    /// `map_entries` describes the layout of `data`. Each entry maps
+    /// a constant ID to an offset and size within `data`.
+    ///
+    /// Must be called after [`shader`](Self::shader).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use ignis::*; use ash::vk;
+    /// # fn example(builder: ComputePipelineBuilder,
+    /// #            cs: vk::ShaderModule) -> ComputePipelineBuilder {
+    /// builder
+    ///     .shader(cs, "main")
+    ///     .specialization(
+    ///         &[
+    ///             vk::SpecializationMapEntry { constant_id: 0, offset: 0, size: 4 },
+    ///             vk::SpecializationMapEntry { constant_id: 1, offset: 4, size: 4 },
+    ///         ],
+    ///         &{
+    ///             let mut buf = [0u8; 8];
+    ///             buf[0..4].copy_from_slice(&64u32.to_ne_bytes()); // local_size_x
+    ///             buf[4..8].copy_from_slice(&1u32.to_ne_bytes());  // enable_feature
+    ///             buf
+    ///         },
+    ///     )
+    /// # }
+    /// ```
+    pub fn specialization(
+        mut self,
+        map_entries: &[vk::SpecializationMapEntry],
+        data: &[u8],
+    ) -> Self {
+        if let Some(ref mut stage) = self.stage {
+            stage.specialization_map = map_entries.to_vec();
+            stage.specialization_data = Some(data.to_vec());
+        }
         self
     }
 
@@ -364,10 +478,20 @@ impl ComputePipelineBuilder {
             return Err(Error::InvalidConfig("pipeline layout is required"));
         }
 
-        let stage_info = vk::PipelineShaderStageCreateInfo::default()
+        // Build specialization info (must live until create_compute_pipelines returns).
+        let spec_info = stage_cfg.specialization_data.as_ref().map(|data| {
+            vk::SpecializationInfo::default()
+                .map_entries(&stage_cfg.specialization_map)
+                .data(data)
+        });
+
+        let mut stage_info = vk::PipelineShaderStageCreateInfo::default()
             .stage(stage_cfg.stage)
             .module(stage_cfg.module)
             .name(&stage_cfg.entry_point);
+        if let Some(ref spec) = spec_info {
+            stage_info = stage_info.specialization_info(spec);
+        }
 
         let create_info = vk::ComputePipelineCreateInfo::default()
             .stage(stage_info)
@@ -472,7 +596,24 @@ impl RayTracingPipelineBuilder {
             stage: stage_flags,
             module,
             entry_point: CString::new(entry_point).unwrap(),
+            specialization_data: None,
+            specialization_map: Vec::new(),
         });
+        self
+    }
+
+    /// Set specialization constants for the last added shader stage.
+    ///
+    /// Must be called immediately after [`stage`](Self::stage).
+    pub fn specialization(
+        mut self,
+        map_entries: &[vk::SpecializationMapEntry],
+        data: &[u8],
+    ) -> Self {
+        if let Some(last) = self.stages.last_mut() {
+            last.specialization_map = map_entries.to_vec();
+            last.specialization_data = Some(data.to_vec());
+        }
         self
     }
 
@@ -528,15 +669,33 @@ impl RayTracingPipelineBuilder {
             ));
         }
 
+        // Build specialization infos.
+        let spec_infos: Vec<Option<vk::SpecializationInfo<'_>>> = self
+            .stages
+            .iter()
+            .map(|s| {
+                s.specialization_data.as_ref().map(|data| {
+                    vk::SpecializationInfo::default()
+                        .map_entries(&s.specialization_map)
+                        .data(data)
+                })
+            })
+            .collect();
+
         // Build stage infos.
         let stage_infos: Vec<vk::PipelineShaderStageCreateInfo<'_>> = self
             .stages
             .iter()
-            .map(|s| {
-                vk::PipelineShaderStageCreateInfo::default()
+            .enumerate()
+            .map(|(i, s)| {
+                let mut info = vk::PipelineShaderStageCreateInfo::default()
                     .stage(s.stage)
                     .module(s.module)
-                    .name(&s.entry_point)
+                    .name(&s.entry_point);
+                if let Some(ref spec) = spec_infos[i] {
+                    info = info.specialization_info(spec);
+                }
+                info
             })
             .collect();
 
@@ -810,6 +969,109 @@ impl ShaderBindingTableLayout {
             device_address: base_address + self.callable_offset,
             stride: self.callable_stride,
             size: self.callable_size,
+        }
+    }
+}
+
+/// Builder for a `VkPipelineLayout`.
+///
+/// RAII wrapper that creates and owns the layout. Eliminates raw
+/// `vkCreatePipelineLayout` calls.
+///
+/// # Example
+///
+/// ```rust,no_run
+/// # use ignis::*; use ash::vk;
+/// # fn example(ignis: &Ignis, set_layout: vk::DescriptorSetLayout) -> Result<()> {
+/// let layout = ignis.pipeline_layout_builder()
+///     .descriptor_set_layout(set_layout)
+///     .push_constant_range(vk::ShaderStageFlags::VERTEX, 0, 64)
+///     .build()?;
+/// // Use layout.handle() in pipeline builders.
+/// # Ok(())
+/// # }
+/// ```
+pub struct PipelineLayoutBuilder {
+    shared: Arc<SharedState>,
+    set_layouts: Vec<vk::DescriptorSetLayout>,
+    push_constant_ranges: Vec<vk::PushConstantRange>,
+}
+
+impl PipelineLayoutBuilder {
+    pub(crate) fn new(shared: Arc<SharedState>) -> Self {
+        Self {
+            shared,
+            set_layouts: Vec::new(),
+            push_constant_ranges: Vec::new(),
+        }
+    }
+
+    /// Add a descriptor set layout.
+    pub fn descriptor_set_layout(mut self, layout: vk::DescriptorSetLayout) -> Self {
+        self.set_layouts.push(layout);
+        self
+    }
+
+    /// Add multiple descriptor set layouts at once.
+    pub fn descriptor_set_layouts(mut self, layouts: &[vk::DescriptorSetLayout]) -> Self {
+        self.set_layouts.extend_from_slice(layouts);
+        self
+    }
+
+    /// Add a push constant range.
+    pub fn push_constant_range(
+        mut self,
+        stage_flags: vk::ShaderStageFlags,
+        offset: u32,
+        size: u32,
+    ) -> Self {
+        self.push_constant_ranges.push(vk::PushConstantRange {
+            stage_flags,
+            offset,
+            size,
+        });
+        self
+    }
+
+    /// Build the pipeline layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Vulkan error if layout creation fails.
+    pub fn build(self) -> Result<PipelineLayoutHandle> {
+        let ci = vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&self.set_layouts)
+            .push_constant_ranges(&self.push_constant_ranges);
+        let handle = unsafe { self.shared.device.create_pipeline_layout(&ci, None)? };
+        Ok(PipelineLayoutHandle {
+            shared: self.shared,
+            handle,
+        })
+    }
+}
+
+/// An owned `VkPipelineLayout` with automatic cleanup on drop.
+///
+/// Created via [`PipelineLayoutBuilder::build`].
+pub struct PipelineLayoutHandle {
+    shared: Arc<SharedState>,
+    handle: vk::PipelineLayout,
+}
+
+impl PipelineLayoutHandle {
+    /// Get the raw pipeline layout handle.
+    #[inline]
+    pub fn handle(&self) -> vk::PipelineLayout {
+        self.handle
+    }
+}
+
+impl Drop for PipelineLayoutHandle {
+    fn drop(&mut self) {
+        unsafe {
+            self.shared
+                .device
+                .destroy_pipeline_layout(self.handle, None);
         }
     }
 }

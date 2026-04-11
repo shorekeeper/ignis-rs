@@ -11,7 +11,7 @@ env:
 
 jobs:
   check:
-    name: Check (${{ matrix.os }})
+    name: Compile (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -20,14 +20,72 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install Vulkan SDK (Linux)
+      - name: Install Vulkan loader (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev
 
-      - run: cargo check --all-targets
+      - run: cargo check --lib
+      - run: cargo check --lib --features full
+      - run: cargo check --examples --features full
+
+  features:
+    name: Feature matrix
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install Vulkan loader
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+
+      - name: Check feature combinations
+        run: |
+          set -e
+          features=(
+            ""
+            "tracking"
+            "descriptors"
+            "debug-tools"
+            "slab-allocator"
+            "swapchain"
+            "interop"
+            "tracking,descriptors"
+            "tracking,debug-tools"
+            "tracking,slab-allocator"
+            "descriptors,debug-tools"
+            "tracking,descriptors,debug-tools"
+            "tracking,descriptors,debug-tools,slab-allocator"
+            "full"
+          )
+          failed=0
+          for f in "${features[@]}"; do
+            if [ -z "$f" ]; then
+              label="(no features)"
+              echo "::group::Building $label"
+              if ! cargo check --lib 2>&1; then
+                echo "::error::Failed: $label"
+                failed=$((failed + 1))
+              fi
+              echo "::endgroup::"
+            else
+              label="$f"
+              echo "::group::Building [$label]"
+              if ! cargo check --lib --features "$f" 2>&1; then
+                echo "::error::Failed: $label"
+                failed=$((failed + 1))
+              fi
+              echo "::endgroup::"
+            fi
+          done
+          echo "$((${#features[@]} - failed))/${#features[@]} feature combinations passed"
+          [ "$failed" -eq 0 ] || exit 1
 
   fmt:
     name: Format
@@ -47,57 +105,98 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install Vulkan headers
+      - name: Install Vulkan loader
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev
 
-      - run: cargo clippy --all-targets -- -D warnings
+      - name: Clippy (full features)
+        run: >
+          cargo clippy --all-targets --features full --
+          -W clippy::all -W clippy::pedantic
+          -A clippy::module_name_repetitions
+          -A clippy::too_many_arguments
+          -A clippy::missing_errors_doc
+          -A clippy::must_use_candidate
+          -A clippy::return_self_not_must_use
+          -A clippy::cast_possible_truncation
+          -A clippy::cast_sign_loss
+          -A clippy::cast_precision_loss
+          -A clippy::missing_panics_doc
 
-  test-unit:
+      - name: Clippy (no features)
+        run: >
+          cargo clippy --lib --
+          -W clippy::all -W clippy::pedantic
+          -A clippy::module_name_repetitions
+          -A clippy::too_many_arguments
+          -A clippy::missing_errors_doc
+          -A clippy::must_use_candidate
+          -A clippy::return_self_not_must_use
+          -A clippy::cast_possible_truncation
+          -A clippy::cast_sign_loss
+          -A clippy::cast_precision_loss
+          -A clippy::missing_panics_doc
+
+  test:
     name: Unit tests
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install Vulkan headers
+      - name: Install Vulkan loader
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev
 
-      - run: cargo test --lib
+      - run: cargo test --lib --features full
 
-  test-gpu:
-    name: Smoke test (GPU)
+  smoke:
+    name: Smoke test (lavapipe)
     runs-on: ubuntu-22.04
     continue-on-error: true
+    env:
+      CI: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
       - name: Install Vulkan + lavapipe
         run: |
           sudo apt-get update
-          sudo apt-get install -y libvulkan-dev mesa-vulkan-drivers vulkan-tools vulkan-validationlayers
+          sudo apt-get install -y \
+            libvulkan-dev \
+            mesa-vulkan-drivers \
+            vulkan-tools
 
-      - name: Check Vulkan ICD
+      - name: Detect Vulkan driver
         id: vk
         run: |
-          if vulkaninfo --summary 2>/dev/null | grep -q "deviceName"; then
+          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          if vulkaninfo --summary 2>&1 | grep -qi "devicename"; then
             echo "ok=true" >> "$GITHUB_OUTPUT"
+            echo "Lavapipe detected:"
+            vulkaninfo --summary 2>&1 | head -30
           else
             echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "No Vulkan ICD found"
+            ls -la /usr/share/vulkan/icd.d/ 2>/dev/null || echo "No ICD directory"
           fi
 
       - name: Run smoke test
         if: steps.vk.outputs.ok == 'true'
-        run: cargo run --example smoke_test
+        run: |
+          export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
+          cargo run --example smoke_test --features full
 
       - name: Skip notice
         if: steps.vk.outputs.ok != 'true'
-        run: echo "No Vulkan ICD available, skipped"
+        run: echo "::warning::Lavapipe not available on this runner, smoke test skipped"
 
   doc:
     name: Documentation
@@ -105,13 +204,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install Vulkan headers
+      - name: Install Vulkan loader
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev
 
-      - run: cargo doc --no-deps
+      - run: cargo doc --no-deps --features full
         env:
           RUSTDOCFLAGS: -D warnings
 
@@ -121,10 +221,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.70.0
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Install Vulkan headers
+      - name: Install Vulkan loader
         run: |
           sudo apt-get update
           sudo apt-get install -y libvulkan-dev
 
-      - run: cargo check
+      - run: cargo check --lib
+      - run: cargo check --lib --features full

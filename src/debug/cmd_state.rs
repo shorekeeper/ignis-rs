@@ -461,6 +461,94 @@ impl<'a> ValidatedRecorder<'a> {
         self.inner.copy_buffer_to_image(src, dst, layout, regions);
     }
 
+    /// Draw with indirect parameters.
+    pub fn draw_indirect(
+        &mut self,
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        draw_count: u32,
+        stride: u32,
+    ) {
+        if !self.check("draw_indirect()", CommandCategory::Draw) {
+            return;
+        }
+        if !self.bound_graphics_pipeline {
+            let report = format_binding_error("draw_indirect", "graphics pipeline");
+            self.dispatch_error(&report);
+            return;
+        }
+        self.record_history("draw_indirect()");
+        self.inner.draw_indirect(buffer, offset, draw_count, stride);
+    }
+
+    /// Draw indexed with indirect parameters.
+    pub fn draw_indexed_indirect(
+        &mut self,
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        draw_count: u32,
+        stride: u32,
+    ) {
+        if !self.check("draw_indexed_indirect()", CommandCategory::Draw) {
+            return;
+        }
+        if !self.bound_graphics_pipeline {
+            let report = format_binding_error("draw_indexed_indirect", "graphics pipeline");
+            self.dispatch_error(&report);
+            return;
+        }
+        self.record_history("draw_indexed_indirect()");
+        self.inner
+            .draw_indexed_indirect(buffer, offset, draw_count, stride);
+    }
+
+    /// Dispatch compute with indirect parameters.
+    pub fn dispatch_indirect(&mut self, buffer: vk::Buffer, offset: vk::DeviceSize) {
+        if !self.check("dispatch_indirect()", CommandCategory::Dispatch) {
+            return;
+        }
+        if !self.bound_compute_pipeline {
+            let report = format_binding_error("dispatch_indirect", "compute pipeline");
+            self.dispatch_error(&report);
+            return;
+        }
+        self.record_history("dispatch_indirect()");
+        self.inner.dispatch_indirect(buffer, offset);
+    }
+
+    /// Blit image regions.
+    pub fn blit_image(
+        &mut self,
+        src: vk::Image,
+        src_layout: vk::ImageLayout,
+        dst: vk::Image,
+        dst_layout: vk::ImageLayout,
+        regions: &[vk::ImageBlit],
+        filter: vk::Filter,
+    ) {
+        if !self.check("blit_image()", CommandCategory::Transfer) {
+            return;
+        }
+        self.record_history("blit_image()");
+        self.inner
+            .blit_image(src, src_layout, dst, dst_layout, regions, filter);
+    }
+
+    /// Fill a buffer with a 32-bit value.
+    pub fn fill_buffer(
+        &mut self,
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        size: vk::DeviceSize,
+        data: u32,
+    ) {
+        if !self.check("fill_buffer()", CommandCategory::Transfer) {
+            return;
+        }
+        self.record_history("fill_buffer()");
+        self.inner.fill_buffer(buffer, offset, size, data);
+    }
+
     /// Begin a traditional render pass.
     pub fn begin_render_pass(
         &mut self,
@@ -534,14 +622,16 @@ fn format_state_error(
     history: &[HistoryEntry],
 ) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(1024);
+    let mut o = String::with_capacity(2048);
 
-    diagnostic::write_header(
+    diagnostic::write_full_diagnostic(
         &mut o,
         &s,
         &Severity::Error,
         "IGN-S001",
         "invalid command in current recording state",
+        true,
+        true,
     );
     diagnostic::write_location(&mut o, &s, &format!("command: {}", s.bold(command)));
     diagnostic::write_pipe_empty(&mut o, &s);
@@ -556,83 +646,188 @@ fn format_state_error(
         &s,
         &format!("expected:      {}", s.bold_green(expected)),
     );
+
+    // ── Visual state machine diagram ──
+    diagnostic::write_separator(&mut o, &s);
+    diagnostic::write_section(&mut o, &s, "Command Buffer State Machine");
+    diagnostic::write_pipe_raw(&mut o, &s, &format!(
+        "  {} ─begin─→ {} ─begin_rp─→ {}",
+        s.dim("[Initial]"),
+        s.bold_green("[Recording]"),
+        s.bold_cyan("[InRenderPass]"),
+    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &format!(
+        "  {}             {} ←─end_rp──┘",
+        "               ",
+        s.bold_green("[Recording]"),
+    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &format!(
+        "  {} ─begin─→ {} ─begin_dr─→ {}",
+        s.dim("[Initial]"),
+        s.bold_green("[Recording]"),
+        s.bold_cyan("[DynRendering]"),
+    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &format!(
+        "  {}             {} ←─end_dr──┘",
+        "               ",
+        s.bold_green("[Recording]"),
+    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &format!(
+        "  {}             {} ──end──→ {}",
+        "               ",
+        s.bold_green("[Recording]"),
+        s.dim("[Ended]"),
+    ));
     diagnostic::write_pipe_empty(&mut o, &s);
 
+    // Highlight current position
+    diagnostic::write_pipe(&mut o, &s, &format!(
+        "you are in:  {}",
+        s.bold_red(&current_state.to_string())
+    ));
+    diagnostic::write_pipe(&mut o, &s, &format!(
+        "you called:  {} (requires: {})",
+        s.bold_red(command),
+        s.bold_green(expected)
+    ));
+
+    // ── Command recording history ──
     if !history.is_empty() {
-        diagnostic::write_pipe(&mut o, &s, "state trace (recent):");
-        let start = history.len().saturating_sub(8);
+        diagnostic::write_separator(&mut o, &s);
+        diagnostic::write_section(
+            &mut o,
+            &s,
+            &format!("Recording History ({} commands)", history.len()),
+        );
+
+        let start = history.len().saturating_sub(16);
+        if start > 0 {
+            diagnostic::write_pipe_raw(
+                &mut o,
+                &s,
+                &s.dim(&format!("  ... {} earlier commands omitted ...", start)),
+            );
+        }
+
         for (i, entry) in history[start..].iter().enumerate() {
-            let marker = if i == history[start..].len() - 1 {
-                s.bold_red("->")
-            } else {
-                s.dim("  ")
+            let idx = start + i;
+            let state_color = match &entry.state_after {
+                RecordingState::Recording => s.green(&entry.state_after.to_string()),
+                RecordingState::InRenderPass { .. } => {
+                    s.bold_cyan(&entry.state_after.to_string())
+                }
+                RecordingState::InDynamicRendering => {
+                    s.bold_cyan(&entry.state_after.to_string())
+                }
+                RecordingState::Ended => s.dim(&entry.state_after.to_string()),
             };
+
+            let marker = if i == history[start..].len() - 1 {
+                s.bold_red("→")
+            } else {
+                s.dim(" ")
+            };
+
             diagnostic::write_pipe(
                 &mut o,
                 &s,
-                &format!("  {marker} {:>30} -> {}", entry.command, entry.state_after,),
+                &format!(
+                    " {marker} {:<4} {:<35} → {}",
+                    s.dim(&format!("#{idx}")),
+                    entry.command,
+                    state_color,
+                ),
             );
         }
+
+        // Show the failing command
         diagnostic::write_pipe(
             &mut o,
             &s,
             &format!(
-                "  {} {:>30} -> {}",
-                s.bold_red("->"),
+                " {} {:<4} {:<35} → {}",
+                s.bold_red("→"),
+                s.bold_red(&format!("#{}", history.len())),
                 s.bold_red(command),
-                s.bold_red("ERROR"),
+                s.bold_red("✗ INVALID"),
             ),
         );
         diagnostic::write_pipe_empty(&mut o, &s);
     }
 
+    // ── Targeted help ──
     let help = match command {
         c if c.starts_with("draw") => {
             "draw commands require an active render pass or dynamic rendering\n\
-             call begin_render_pass() or DynamicRenderPassBuilder::begin() first"
+             call begin_render_pass() or DynamicRenderPassBuilder::begin() first\n\
+             valid states: InRenderPass, InDynamicRendering"
         }
         c if c.starts_with("dispatch") => {
             "dispatch must be called outside a render pass\n\
-             call end_render_pass() or end_rendering() before dispatching compute"
+             call end_render_pass() or end_rendering() before dispatching\n\
+             valid state: Recording (outside any render pass)"
         }
-        c if c.starts_with("copy") => {
+        c if c.starts_with("copy") || c.starts_with("blit") || c.starts_with("fill") => {
             "transfer commands must be outside a render pass\n\
-             call end_render_pass() or end_rendering() before transfers"
+             call end_render_pass() or end_rendering() before transfers\n\
+             valid state: Recording (outside any render pass)"
         }
-        _ => "check the Vulkan specification for valid command sequences",
+        c if c.contains("render_pass") || c.contains("rendering") => {
+            "render pass begin/end must be paired correctly\n\
+             cannot nest render passes or end one that was never started\n\
+             use ValidatedRecorder to catch these errors at record time"
+        }
+        _ => "check the Vulkan specification §6.1 for valid command sequences\n\
+              use ValidatedRecorder::state() to inspect current state",
     };
     diagnostic::write_help(&mut o, &s, help);
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Error);
 
     o
 }
 
 fn format_binding_error(command: &str, missing: &str) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(512);
+    let mut o = String::with_capacity(1024);
 
-    diagnostic::write_header(
+    diagnostic::write_full_diagnostic(
         &mut o,
         &s,
         &Severity::Error,
         "IGN-S002",
         &format!("{command} called without bound {missing}"),
+        false,
+        true,
     );
     diagnostic::write_pipe_empty(&mut o, &s);
     diagnostic::write_pipe(
         &mut o,
         &s,
         &format!(
-            "command {} requires a {} to be bound",
+            "command {} requires a {} to be bound first",
             s.bold_red(command),
             s.bold(missing),
         ),
     );
+
+    diagnostic::write_separator(&mut o, &s);
+    diagnostic::write_section(&mut o, &s, "Required Call Sequence");
+    if missing.contains("graphics") {
+        diagnostic::write_numbered(&mut o, &s, 1, "bind_pipeline(GRAPHICS, pipeline)");
+        diagnostic::write_numbered(&mut o, &s, 2, &format!("{command}(...)"));
+    } else {
+        diagnostic::write_numbered(&mut o, &s, 1, "bind_pipeline(COMPUTE, pipeline)");
+        diagnostic::write_numbered(&mut o, &s, 2, &format!("{command}(...)"));
+    }
+
     diagnostic::write_pipe_empty(&mut o, &s);
     diagnostic::write_help(
         &mut o,
         &s,
         &format!(
-            "call bind_pipeline({}) before {command}",
+            "call bind_pipeline({}) before {command}\n\
+             the pipeline must be compatible with the current render pass (if any)",
             if missing.contains("graphics") {
                 "GRAPHICS, pipeline"
             } else {
@@ -640,6 +835,8 @@ fn format_binding_error(command: &str, missing: &str) -> String {
             }
         ),
     );
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Error);
 
     o
 }

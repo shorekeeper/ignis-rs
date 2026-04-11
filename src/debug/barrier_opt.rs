@@ -48,6 +48,14 @@ pub struct BarrierSuggestion {
     pub suggested_src_access: Option<vk::AccessFlags>,
     /// Suggested replacement for destination access mask.
     pub suggested_dst_access: Option<vk::AccessFlags>,
+    /// Original source stage from the barrier being analyzed.
+    pub original_src_stage: vk::PipelineStageFlags,
+    /// Original destination stage.
+    pub original_dst_stage: vk::PipelineStageFlags,
+    /// Original source access.
+    pub original_src_access: vk::AccessFlags,
+    /// Original destination access.
+    pub original_dst_access: vk::AccessFlags,
 }
 
 /// Category of optimization.
@@ -125,13 +133,17 @@ impl BarrierAnalyzer {
                     kind: SuggestionKind::BroadStage,
                     description: format!(
                         "ALL_COMMANDS stage serializes the GPU pipeline\n\
-                         src={:?} dst={:?}",
+                        src={:?} dst={:?}",
                         barrier.src_stage, barrier.dst_stage,
                     ),
                     suggested_src_stage: Some(suggested_src),
                     suggested_dst_stage: Some(suggested_dst),
                     suggested_src_access: None,
                     suggested_dst_access: None,
+                    original_src_stage: barrier.src_stage,
+                    original_dst_stage: barrier.dst_stage,
+                    original_src_access: barrier.src_access,
+                    original_dst_access: barrier.dst_access,
                 });
             }
 
@@ -144,7 +156,7 @@ impl BarrierAnalyzer {
                     kind: SuggestionKind::BroadAccess,
                     description: format!(
                         "MEMORY_READ|MEMORY_WRITE is too broad\n\
-                         src_access={:?} dst_access={:?}",
+                        src_access={:?} dst_access={:?}",
                         barrier.src_access, barrier.dst_access,
                     ),
                     suggested_src_stage: None,
@@ -157,6 +169,10 @@ impl BarrierAnalyzer {
                         barrier.dst_access,
                         barrier.dst_stage,
                     )),
+                    original_src_stage: barrier.src_stage,
+                    original_dst_stage: barrier.dst_stage,
+                    original_src_access: barrier.src_access,
+                    original_dst_access: barrier.dst_access,
                 });
             }
         }
@@ -183,6 +199,10 @@ impl BarrierAnalyzer {
                     suggested_dst_stage: None,
                     suggested_src_access: None,
                     suggested_dst_access: None,
+                    original_src_stage: b.src_stage,
+                    original_dst_stage: b.dst_stage,
+                    original_src_access: b.src_access,
+                    original_dst_access: b.dst_access,
                 });
             }
         }
@@ -303,7 +323,7 @@ fn narrow_access(access: vk::AccessFlags, stage: vk::PipelineStageFlags) -> vk::
 
 fn format_barrier_report(suggestions: &[BarrierSuggestion]) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(suggestions.len() * 512);
+    let mut o = String::with_capacity(suggestions.len() * 1024);
 
     diagnostic::write_header(
         &mut o,
@@ -337,19 +357,47 @@ fn format_barrier_report(suggestions: &[BarrierSuggestion]) -> String {
 
         if has_suggestion {
             diagnostic::write_pipe_empty(&mut o, &s);
-            diagnostic::write_pipe(&mut o, &s, &s.green("suggested:").clone());
+
+            // Before / After comparison table
+            diagnostic::write_section(&mut o, &s, "Suggested Replacement");
+            diagnostic::write_table_header(&mut o, &s, &[
+                ("field", 12), ("current", 30), ("suggested", 30),
+            ]);
 
             if let Some(src) = sug.suggested_src_stage {
-                diagnostic::write_pipe(&mut o, &s, &format!("  src_stage = {src:?}"));
+                diagnostic::write_table_row(&mut o, &s, &[
+                    ("src_stage", 12),
+                    (&diagnostic::stage_flags_short(sug.original_src_stage), 30),
+                    (&diagnostic::stage_flags_short(src), 30),
+                ]);
             }
             if let Some(dst) = sug.suggested_dst_stage {
-                diagnostic::write_pipe(&mut o, &s, &format!("  dst_stage = {dst:?}"));
+                diagnostic::write_table_row(&mut o, &s, &[
+                    ("dst_stage", 12),
+                    (&diagnostic::stage_flags_short(sug.original_dst_stage), 30),
+                    (&diagnostic::stage_flags_short(dst), 30),
+                ]);
             }
             if let Some(src) = sug.suggested_src_access {
-                diagnostic::write_pipe(&mut o, &s, &format!("  src_access = {src:?}"));
+                diagnostic::write_pipe(&mut o, &s, &format!(
+                    "  src_access = {:?}", src
+                ));
             }
             if let Some(dst) = sug.suggested_dst_access {
-                diagnostic::write_pipe(&mut o, &s, &format!("  dst_access = {dst:?}"));
+                diagnostic::write_pipe(&mut o, &s, &format!(
+                    "  dst_access = {:?}", dst
+                ));
+            }
+
+            // Performance impact note
+            diagnostic::write_pipe_empty(&mut o, &s);
+            if sug.kind == SuggestionKind::BroadStage {
+                diagnostic::write_pipe_raw(&mut o, &s, &s.bold_yellow(
+                    "  estimated impact: ALL_COMMANDS serializes the full GPU pipeline"
+                ));
+                diagnostic::write_pipe_raw(&mut o, &s, &s.bold_yellow(
+                    "  typical throughput reduction: 10-40%"
+                ));
             }
         }
 
@@ -359,8 +407,12 @@ fn format_barrier_report(suggestions: &[BarrierSuggestion]) -> String {
     diagnostic::write_help(
         &mut o,
         &s,
-        "overly broad barriers serialize GPU work and can\nreduce performance by 10-40%\nuse ResourceTracker::transition() for automatic minimal barriers",
+        "overly broad barriers serialize GPU work and reduce parallelism\n\
+         use ResourceTracker::transition() for automatic minimal barriers\n\
+         or specify the exact src/dst stages for each barrier manually",
     );
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Warning);
 
     o
 }

@@ -233,7 +233,7 @@ impl Default for AliasingDetector {
 
 fn format_aliasing_report(issues: &[AliasingIssue]) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(issues.len() * 512);
+    let mut o = String::with_capacity(issues.len() * 1024);
 
     for (i, issue) in issues.iter().enumerate() {
         let name_str = issue
@@ -242,12 +242,14 @@ fn format_aliasing_report(issues: &[AliasingIssue]) -> String {
             .map(|n| format!(" \"{}\"", s.bold_cyan(n)))
             .unwrap_or_default();
 
-        diagnostic::write_header(
+        diagnostic::write_full_diagnostic(
             &mut o,
             &s,
             &Severity::Error,
             "IGN-A001",
-            &format!("resource aliasing without synchronization (#{})", i + 1,),
+            &format!("resource aliasing without synchronization (#{})", i + 1),
+            i == 0, // env block only on first issue
+            i == 0, // backtrace only on first issue
         );
         diagnostic::write_location(
             &mut o,
@@ -256,52 +258,86 @@ fn format_aliasing_report(issues: &[AliasingIssue]) -> String {
         );
         diagnostic::write_pipe_empty(&mut o, &s);
 
-        diagnostic::write_pipe(
-            &mut o,
-            &s,
-            &format!(
-                "  #{:<4} {:>5} at stage {:?}  \"{}\"",
-                issue.write_access.operation_index,
-                s.red("WRITE"),
-                issue.write_access.stage,
-                issue.write_access.label,
-            ),
-        );
-        diagnostic::write_pipe(
-            &mut o,
-            &s,
-            &format!("          {} no barrier between", s.bold_red("!!!")),
-        );
+        // ── Execution timeline visualization ──
+        diagnostic::write_section(&mut o, &s, "Execution Timeline");
 
-        let conflict_label = match issue.conflict_access.access_type {
-            AccessType::Read => s.yellow("READ"),
-            AccessType::Write => s.red("WRITE"),
-        };
-        diagnostic::write_pipe(
-            &mut o,
-            &s,
-            &format!(
-                "  #{:<4} {:>5} at stage {:?}  \"{}\"",
-                issue.conflict_access.operation_index,
-                conflict_label,
-                issue.conflict_access.stage,
-                issue.conflict_access.label,
-            ),
-        );
+        let w_idx = issue.write_access.operation_index;
+        let c_idx = issue.conflict_access.operation_index;
+        let min_idx = w_idx.min(c_idx);
+        let max_idx = w_idx.max(c_idx);
+
+        for idx in min_idx..=max_idx {
+            if idx == w_idx {
+                diagnostic::write_pipe_raw(
+                    &mut o,
+                    &s,
+                    &format!(
+                        "  op #{:<4} {} at {}  \"{}\"",
+                        idx,
+                        s.bold_red("██ WRITE"),
+                        s.dim(&diagnostic::stage_flags_short(issue.write_access.stage)),
+                        issue.write_access.label,
+                    ),
+                );
+            } else if idx == c_idx {
+                let kind = match issue.conflict_access.access_type {
+                    AccessType::Read => s.bold_yellow("██ READ "),
+                    AccessType::Write => s.bold_red("██ WRITE"),
+                };
+                diagnostic::write_pipe_raw(
+                    &mut o,
+                    &s,
+                    &format!(
+                        "  op #{:<4} {} at {}  \"{}\"",
+                        idx,
+                        kind,
+                        s.dim(&diagnostic::stage_flags_short(issue.conflict_access.stage)),
+                        issue.conflict_access.label,
+                    ),
+                );
+            } else {
+                diagnostic::write_pipe_raw(
+                    &mut o,
+                    &s,
+                    &format!("  op #{:<4} {}", idx, s.dim("·· (other operations)")),
+                );
+            }
+
+            // Show missing barrier between write and conflict
+            if idx == w_idx.min(c_idx) && idx < w_idx.max(c_idx) {
+                diagnostic::write_pipe_raw(
+                    &mut o,
+                    &s,
+                    &format!(
+                        "          {} {}",
+                        s.bold_red("╳╳╳╳╳╳╳╳"),
+                        s.bold_red("NO BARRIER — undefined behavior"),
+                    ),
+                );
+            }
+        }
 
         diagnostic::write_pipe_empty(&mut o, &s);
         diagnostic::write_note(
             &mut o,
             &s,
-            "accessing a resource written without a barrier causes undefined results",
+            "accessing a resource written without a synchronization barrier\n\
+             causes undefined results: visual corruption, stale data,\n\
+             or device lost on some drivers",
         );
         diagnostic::write_help(
             &mut o,
             &s,
-            "insert a pipeline_barrier() or use ResourceTracker::transition()\nbetween the conflicting operations",
+            "insert a pipeline_barrier() between the conflicting operations\n\
+             or use ResourceTracker::transition_image() / transition_buffer()\n\
+             for automatic minimal barrier computation",
         );
 
-        let _ = writeln!(o);
+        diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Error);
+
+        if i < issues.len() - 1 {
+            let _ = writeln!(o);
+        }
     }
 
     o

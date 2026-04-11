@@ -184,18 +184,20 @@ impl Default for DescriptorAuditor {
 
 fn format_descriptor_report(issues: &[DescriptorIssue]) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(issues.len() * 256);
+    let mut o = String::with_capacity(issues.len() * 512);
 
-    diagnostic::write_header(
+    diagnostic::write_full_diagnostic(
         &mut o,
         &s,
         &Severity::Error,
         "IGN-D001",
         &format!("{} stale descriptor reference(s) detected", issues.len()),
+        true,
+        true,
     );
     diagnostic::write_pipe_empty(&mut o, &s);
 
-    for issue in issues {
+    for (i, issue) in issues.iter().enumerate() {
         let name_str = issue
             .set_name
             .as_deref()
@@ -206,18 +208,20 @@ fn format_descriptor_report(issues: &[DescriptorIssue]) -> String {
             &mut o,
             &s,
             &format!(
-                "DescriptorSet({:#x}){name_str} binding={}",
-                issue.set_handle, issue.binding,
+                "{} DescriptorSet({:#x}){name_str} binding={}",
+                s.dim(&format!("[{i}]")),
+                issue.set_handle,
+                issue.binding,
             ),
         );
         diagnostic::write_pipe(
             &mut o,
             &s,
             &format!(
-                "  references {} {:#x} {}",
+                "    references {} {:#x} {}",
                 issue.resource_kind,
                 issue.dead_handle,
-                s.bold_red("DESTROYED"),
+                s.bold_red("← DESTROYED"),
             ),
         );
         diagnostic::write_pipe_empty(&mut o, &s);
@@ -226,14 +230,19 @@ fn format_descriptor_report(issues: &[DescriptorIssue]) -> String {
     diagnostic::write_note(
         &mut o,
         &s,
-        "using a descriptor referencing a destroyed resource\ncauses undefined behavior (crash, corruption, or device lost)",
+        "using a descriptor referencing a destroyed resource causes\n\
+         undefined behavior: GPU crash, visual corruption, or device lost\n\
+         the descriptor set is still bound but its backing resource is gone",
     );
     diagnostic::write_help(
         &mut o,
         &s,
         "update or invalidate descriptor sets before destroying resources\n\
-         or delay resource destruction until the descriptor set is no longer in use",
+         or delay resource destruction via DeletionQueue until the\n\
+         descriptor set is no longer bound to any in-flight command buffer",
     );
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Error);
 
     o
 }

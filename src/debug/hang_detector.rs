@@ -426,17 +426,19 @@ fn format_hang_report(
 ) -> String {
     use ash::vk::Handle;
     let s = Style::detect();
-    let mut o = String::with_capacity(2048);
+    let mut o = String::with_capacity(4096);
 
-    diagnostic::write_header(
+    diagnostic::write_full_diagnostic(
         &mut o,
         &s,
         &Severity::Error,
         "IGN-W001",
         &format!(
-            "GPU hang detected (fence timeout after {})",
+            "GPU hang detected (fence unsignaled after {})",
             diagnostic::format_duration(elapsed)
         ),
+        true,
+        false, // No backtrace — the hang is on the GPU side.
     );
     diagnostic::write_location(
         &mut o,
@@ -445,29 +447,51 @@ fn format_hang_report(
     );
     diagnostic::write_pipe_empty(&mut o, &s);
 
-    if let Some(trail) = crumbs {
-        if trail.is_empty() {
-            diagnostic::write_pipe(&mut o, &s, "no breadcrumbs recorded");
-        } else {
-            diagnostic::write_pipe(&mut o, &s, "breadcrumb trail:");
-            diagnostic::write_pipe_empty(&mut o, &s);
+    // ── Timing breakdown ──
+    diagnostic::write_section(&mut o, &s, "Timing");
+    diagnostic::write_kv(&mut o, &s, "Elapsed since submit", &diagnostic::format_duration(elapsed));
+    diagnostic::write_kv(&mut o, &s, "Detection thread", &diagnostic::current_thread_name());
+    diagnostic::write_pipe_empty(&mut o, &s);
 
+    // ── Breadcrumb trail ──
+    if let Some(trail) = crumbs {
+        diagnostic::write_section(&mut o, &s, "Breadcrumb Trail");
+
+        if trail.is_empty() {
+            diagnostic::write_pipe(&mut o, &s, "no breadcrumbs recorded in this submission");
+            diagnostic::write_pipe(&mut o, &s, &s.dim(
+                "attach a BreadcrumbBuffer to track GPU progress"
+            ));
+        } else {
             let last_completed = trail.iter().rev().find(|(_, done)| *done);
             let first_pending = trail.iter().find(|(_, done)| !*done);
+            let completed_count = trail.iter().filter(|(_, done)| *done).count();
+            let total = trail.len();
 
+            // Progress bar
+            let progress = completed_count as f64 / total as f64;
+            let bar = diagnostic::render_bar(
+                progress, 40,
+                Some(&format!("{completed_count}/{total} completed")),
+                &s,
+            );
+            diagnostic::write_pipe_raw(&mut o, &s, &format!("  {bar}"));
+            diagnostic::write_pipe_empty(&mut o, &s);
+
+            // Trail listing
             for (crumb, completed) in trail {
                 let marker = if *completed {
-                    s.green("OK")
+                    s.green("  ✓ OK")
                 } else if Some(&crumb.id) == first_pending.map(|(c, _)| &c.id) {
-                    s.bold_red("--> HUNG")
+                    s.bold_red("  → HUNG HERE")
                 } else {
-                    s.dim("PENDING")
+                    s.dim("  · PENDING")
                 };
 
                 diagnostic::write_pipe(
                     &mut o,
                     &s,
-                    &format!("  #{:<4} {:40} {}", crumb.id, crumb.label, marker,),
+                    &format!("  #{:<4} {:40} {}", crumb.id, crumb.label, marker),
                 );
             }
             diagnostic::write_pipe_empty(&mut o, &s);
@@ -476,7 +500,7 @@ fn format_hang_report(
                 diagnostic::write_note(
                     &mut o,
                     &s,
-                    &format!("last completed breadcrumb: #{} \"{}\"", last.id, last.label),
+                    &format!("last completed: #{} \"{}\"", last.id, last.label),
                 );
             }
             if let Some((first, _)) = first_pending {
@@ -484,33 +508,53 @@ fn format_hang_report(
                     &mut o,
                     &s,
                     &format!(
-                        "first pending breadcrumb: #{} \"{}\"",
+                        "hung at: #{} \"{}\" ← investigate this operation",
                         first.id, first.label
                     ),
                 );
             }
         }
     } else {
+        diagnostic::write_section(&mut o, &s, "Breadcrumb Trail");
         diagnostic::write_pipe(
             &mut o,
             &s,
             "no breadcrumb buffer attached to this submission",
         );
+        diagnostic::write_pipe(&mut o, &s, &s.dim(
+            "use HangDetector::watch(fence, label, Some(&breadcrumbs))"
+        ));
     }
 
+    // ── Probable causes (ranked) ──
+    diagnostic::write_separator(&mut o, &s);
+    diagnostic::write_section(&mut o, &s, "Probable Causes (ranked by likelihood)");
+    diagnostic::write_numbered(&mut o, &s, 1,
+        "Infinite or extremely long shader loop (check for while(true) without break)");
+    diagnostic::write_numbered(&mut o, &s, 2,
+        "Excessive dispatch/draw dimensions (verify group counts and vertex counts)");
+    diagnostic::write_numbered(&mut o, &s, 3,
+        "GPU memory corruption causing invalid instruction fetch or data loop");
+    diagnostic::write_numbered(&mut o, &s, 4,
+        "Driver bug (check vendor-specific known issues for your GPU)");
+    diagnostic::write_numbered(&mut o, &s, 5,
+        "TDR timeout too short for this workload (Windows: TdrDelay registry key)");
+    diagnostic::write_numbered(&mut o, &s, 6,
+        "Deadlock between queues waiting on each other's semaphores");
+
     diagnostic::write_pipe_empty(&mut o, &s);
-    diagnostic::write_note(
-        &mut o,
-        &s,
-        &format!("thread=\"{}\"", diagnostic::current_thread_name()),
-    );
     diagnostic::write_help(
         &mut o,
         &s,
-        "common causes: infinite shader loop, excessive draw, driver bug\n\
-         check the hung operation's shader for infinite loops\n\
-         try reducing dispatch/draw dimensions",
+        "to debug further:\n\
+         1. Add more breadcrumbs around the hung operation to narrow down the cause\n\
+         2. Reduce dispatch/draw dimensions to see if the hang disappears\n\
+         3. Check shader source for infinite loops or unbounded recursion\n\
+         4. Try running with GPU validation layers (VK_LAYER_KHRONOS_validation)\n\
+         5. On Windows, increase TdrDelay for long compute shaders",
     );
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Error);
 
     o
 }

@@ -23,3 +23,6 @@ pub mod tracker;
 /// Timeline-based deferred GPU resource destruction.
 #[cfg(feature = "tracking")]
 pub mod deletion;
+/// Mipmap generation utility via blit chain.
+#[cfg(feature = "tracking")]
+pub mod mipmap;

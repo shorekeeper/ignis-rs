@@ -178,14 +178,16 @@ fn format_violation(
 ) -> String {
     use ash::vk::Handle;
     let s = Style::detect();
-    let mut o = String::with_capacity(1024);
+    let mut o = String::with_capacity(2048);
 
-    diagnostic::write_header(
+    diagnostic::write_full_diagnostic(
         &mut o,
         &s,
         &Severity::Error,
         "IGN-T001",
         "command pool accessed from wrong thread",
+        true,
+        true,
     );
     diagnostic::write_location(
         &mut o,
@@ -194,6 +196,8 @@ fn format_violation(
     );
     diagnostic::write_pipe_empty(&mut o, &s);
 
+    // ── Thread comparison ──
+    diagnostic::write_section(&mut o, &s, "Thread Conflict");
     diagnostic::write_pipe(
         &mut o,
         &s,
@@ -219,21 +223,44 @@ fn format_violation(
         &s,
         &format!("  operation:   {}", s.bold_red(accessor_op)),
     );
-    diagnostic::write_pipe_empty(&mut o, &s);
 
+    // ── Vulkan spec quote ──
+    diagnostic::write_separator(&mut o, &s);
+    diagnostic::write_section(&mut o, &s, "Vulkan Specification");
+    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
+        "§3.3.1 External Synchronization:"
+    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
+        "\"The following Vulkan objects must not be accessed"
+    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
+        " concurrently from multiple host threads:"
+    ));
+    diagnostic::write_pipe_raw(&mut o, &s, &s.dim(
+        " VkCommandPool, VkDescriptorPool, VkQueue\""
+    ));
+
+    // ── Remediation options ──
+    diagnostic::write_separator(&mut o, &s);
+    diagnostic::write_section(&mut o, &s, "Remediation Options (best to worst)");
+    diagnostic::write_numbered(&mut o, &s, 1,
+        "Use ParallelRecorder — one pool per thread, zero contention (recommended)");
+    diagnostic::write_numbered(&mut o, &s, 2,
+        "Create separate CommandPool per thread manually");
+    diagnostic::write_numbered(&mut o, &s, 3,
+        "Wrap pool access in std::sync::Mutex (correct but poor throughput)");
+    diagnostic::write_numbered(&mut o, &s, 4,
+        "Call release_ownership() at frame boundaries for intentional thread transfer");
+
+    diagnostic::write_pipe_empty(&mut o, &s);
     diagnostic::write_note(
         &mut o,
         &s,
-        "VkCommandPool requires external synchronization\n\
-         per Vulkan spec section 3.3.1",
+        "this violation may cause data races, command buffer corruption,\n\
+         or undefined behavior depending on GPU driver implementation",
     );
-    diagnostic::write_help(
-        &mut o,
-        &s,
-        "use Ignis::create_parallel_recorder() for multi-threaded\n\
-         command recording, or create one CommandPool per thread\n\
-         call release_ownership() if intentionally transferring between frames",
-    );
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Error);
 
     o
 }

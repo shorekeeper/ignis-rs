@@ -185,7 +185,7 @@ impl Default for PipelineAuditor {
 
 fn format_pipeline_report(issues: &[PipelineIssue]) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(issues.len() * 256);
+    let mut o = String::with_capacity(issues.len() * 512);
 
     for (i, issue) in issues.iter().enumerate() {
         let name_str = issue
@@ -194,12 +194,14 @@ fn format_pipeline_report(issues: &[PipelineIssue]) -> String {
             .map(|n| format!(" \"{}\"", s.bold_cyan(n)))
             .unwrap_or_default();
 
-        diagnostic::write_header(
+        diagnostic::write_full_diagnostic(
             &mut o,
             &s,
             &Severity::Error,
             "IGN-P001",
             &format!("pipeline compatibility issue (#{i})"),
+            i == 0,
+            i == 0,
         );
         diagnostic::write_location(
             &mut o,
@@ -207,14 +209,24 @@ fn format_pipeline_report(issues: &[PipelineIssue]) -> String {
             &format!("VkPipeline({:#x}){name_str}", issue.pipeline),
         );
         diagnostic::write_pipe_empty(&mut o, &s);
-        diagnostic::write_pipe(&mut o, &s, &issue.description);
+
+        for line in issue.description.lines() {
+            diagnostic::write_pipe(&mut o, &s, line);
+        }
+
         diagnostic::write_pipe_empty(&mut o, &s);
         diagnostic::write_help(
             &mut o,
             &s,
-            "verify pipeline layout matches the descriptor set layouts\nand push constant ranges used at bind time",
+            "verify pipeline layout matches the descriptor set layouts\n\
+             and push constant ranges used at bind/push time\n\
+             use PipelineAuditor::register_layout() to track layouts",
         );
-        let _ = writeln!(o);
+        diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Error);
+
+        if i < issues.len() - 1 {
+            let _ = writeln!(o);
+        }
     }
 
     o

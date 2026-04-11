@@ -259,7 +259,7 @@ impl Drop for LifetimeTracker {
 
 fn format_leak_report(objects: &[&TrackedObject]) -> String {
     let s = Style::detect();
-    let mut o = String::with_capacity(256 + objects.len() * 256);
+    let mut o = String::with_capacity(512 + objects.len() * 300);
 
     diagnostic::write_header(
         &mut o,
@@ -271,19 +271,23 @@ fn format_leak_report(objects: &[&TrackedObject]) -> String {
     diagnostic::write_location(&mut o, &s, "LifetimeTracker shutdown");
     diagnostic::write_pipe_empty(&mut o, &s);
 
-    // Group by object type.
+    // Group by object type for summary.
     let mut by_type: HashMap<vk::ObjectType, Vec<&&TrackedObject>> = HashMap::new();
     for obj in objects {
         by_type.entry(obj.object_type).or_default().push(obj);
     }
 
-    // Summary line.
+    // Type summary with counts.
     let mut type_summary: Vec<String> = by_type
         .iter()
-        .map(|(ty, objs)| format!("{}x {}", objs.len(), diagnostic::object_type_name(*ty)))
+        .map(|(ty, objs)| format!("{}× {}", objs.len(), diagnostic::object_type_name(*ty)))
         .collect();
     type_summary.sort();
-    diagnostic::write_pipe(&mut o, &s, &format!("summary: {}", type_summary.join(", ")));
+    diagnostic::write_pipe(
+        &mut o,
+        &s,
+        &format!("summary: {}", type_summary.join(", ")),
+    );
     diagnostic::write_pipe_empty(&mut o, &s);
 
     // Detailed per-object entries.
@@ -312,7 +316,7 @@ fn format_leak_report(objects: &[&TrackedObject]) -> String {
         diagnostic::write_pipe(
             &mut o,
             &s,
-            &format!("     created at {}", s.underline(&loc),),
+            &format!("     created at {}", s.underline(&loc)),
         );
 
         let age = diagnostic::format_duration(obj.created_at.elapsed());
@@ -327,24 +331,48 @@ fn format_leak_report(objects: &[&TrackedObject]) -> String {
             diagnostic::write_pipe(
                 &mut o,
                 &s,
-                &format!("     {} never used - possibly orphaned", s.yellow("!")),
+                &format!(
+                    "     {} never used — likely orphaned (created but never bound/submitted)",
+                    s.bold_yellow("⚠")
+                ),
             );
         }
 
         diagnostic::write_pipe_empty(&mut o, &s);
     }
 
+    // Count never-used objects for extra warning.
+    let unused_count = objects
+        .iter()
+        .filter(|o| o.usage_count.load(Ordering::Relaxed) == 0)
+        .count();
+    if unused_count > 0 {
+        diagnostic::write_warn(
+            &mut o,
+            &s,
+            &format!(
+                "{unused_count} of {} leaked objects were never used — these are likely\n\
+                 created in error or in a code path that forgot to clean up",
+                objects.len()
+            ),
+        );
+    }
+
     diagnostic::write_note(
         &mut o,
         &s,
-        "leaked objects consume device memory until process exit",
+        "leaked objects consume device memory until process exit\n\
+         on resource-constrained GPUs this can cause allocation failures",
     );
     diagnostic::write_help(
         &mut o,
         &s,
         "ensure all objects are dropped before the Ignis context\n\
-         store objects in containers that implement Drop",
+         store objects in containers that implement Drop\n\
+         use DeletionQueue for deferred cleanup tied to GPU completion",
     );
+
+    diagnostic::write_diagnostic_end(&mut o, &s, &Severity::Warning);
 
     o
 }
