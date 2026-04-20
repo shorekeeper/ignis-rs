@@ -137,9 +137,7 @@ pub struct ValidationDiagnostic {
     pub submit_backtrace: Option<Vec<String>>,
 }
 
-
 // Object resolver (cross-reference with user-side registries)
-
 
 /// Returned by `ObjectResolver` implementations to attach metadata to a handle.
 pub struct ResolvedObject {
@@ -189,9 +187,7 @@ fn resolve_object(vk_type: &str, handle: u64) -> (Option<String>, Option<String>
     }
 }
 
-
 // Submit backtrace capture
-
 
 thread_local! {
     /// Stack of backtraces captured at each submit site on this thread.
@@ -293,9 +289,7 @@ fn parse_backtrace_frames(bt: &std::backtrace::Backtrace) -> Vec<String> {
     out
 }
 
-
 // Handler dispatch
-
 
 /// User callback for structured validation diagnostics.
 pub type ValidationHandler = Box<dyn Fn(&ValidationDiagnostic) + Send + Sync>;
@@ -321,9 +315,7 @@ pub(crate) fn dispatch_to_handler(diag: &ValidationDiagnostic) {
     }
 }
 
-
 // Parser
-
 
 /// Parse a raw validation layer message into structured form.
 ///
@@ -455,15 +447,19 @@ fn extract_parameter(s: &str) -> Option<String> {
         let rest = &s[abs..];
         let bytes = rest.as_bytes();
         // Must be preceded by non-alpha (word boundary) and followed by uppercase.
-        let prev_ok = abs == 0
-            || !s.as_bytes()[abs - 1].is_ascii_alphanumeric();
+        let prev_ok = abs == 0 || !s.as_bytes()[abs - 1].is_ascii_alphanumeric();
         if bytes.len() < 3 || !prev_ok || !bytes[1].is_ascii_uppercase() {
             idx = abs + 1;
             continue;
         }
         let end = rest
             .find(|c: char| {
-                !c.is_ascii_alphanumeric() && c != '[' && c != ']' && c != '.' && c != '-' && c != '>'
+                !c.is_ascii_alphanumeric()
+                    && c != '['
+                    && c != ']'
+                    && c != '.'
+                    && c != '-'
+                    && c != '>'
             })
             .unwrap_or(rest.len());
         let candidate = &rest[..end];
@@ -668,11 +664,7 @@ pub fn format_forensic_diagnostic(diag: &ValidationDiagnostic) -> String {
             &s,
             "see the raw layer message below for details, or consult the Vulkan",
         );
-        diagnostic::write_pipe(
-            &mut o,
-            &s,
-            "spec via the VUID identifier shown above.",
-        );
+        diagnostic::write_pipe(&mut o, &s, "spec via the VUID identifier shown above.");
     }
 
     // Submit stack if captured

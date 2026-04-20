@@ -13,9 +13,9 @@ use std::ffi::{c_void, CStr};
 
 use ash::vk;
 
-use crate::diagnostic::{self, Severity, Style};
-use super::validation_forensic::{self, LayerSeverity};
 use super::shader_printf::{self, PRINTF_REGISTRY};
+use super::validation_forensic::{self, LayerSeverity};
+use crate::diagnostic::{self, Severity, Style};
 
 /// Severity mapping policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

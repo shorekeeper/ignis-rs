@@ -227,8 +227,8 @@ fn accel_device_address(
     accel_fn: &ash::khr::acceleration_structure::Device,
     handle: vk::AccelerationStructureKHR,
 ) -> vk::DeviceAddress {
-    let info = vk::AccelerationStructureDeviceAddressInfoKHR::default()
-        .acceleration_structure(handle);
+    let info =
+        vk::AccelerationStructureDeviceAddressInfoKHR::default().acceleration_structure(handle);
     unsafe { accel_fn.get_acceleration_structure_device_address(&info) }
 }
 
@@ -318,11 +318,7 @@ impl BlasBuilder {
     /// additional pass copies the BLAS into a smaller buffer and
     /// destroys the original. The returned [`AccelerationStructure`]
     /// always holds the final (possibly compacted) version.
-    pub fn build(
-        self,
-        pool: &CommandPool,
-        queue: &AsyncQueue,
-    ) -> Result<AccelerationStructure> {
+    pub fn build(self, pool: &CommandPool, queue: &AsyncQueue) -> Result<AccelerationStructure> {
         let compact = self.compact;
         let (accel, scratch) = self.record_initial_build(pool, queue, /* async */ false)?;
         // Initial build has completed by the time record_initial_build
@@ -564,13 +560,15 @@ fn compact_blas(
             .shared
             .device
             .cmd_reset_query_pool(rec.raw_buffer(), query_pool, 0, 1);
-        original.accel_fn.cmd_write_acceleration_structures_properties(
-            rec.raw_buffer(),
-            std::slice::from_ref(&original.handle),
-            vk::QueryType::ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-            query_pool,
-            0,
-        );
+        original
+            .accel_fn
+            .cmd_write_acceleration_structures_properties(
+                rec.raw_buffer(),
+                std::slice::from_ref(&original.handle),
+                vk::QueryType::ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+                query_pool,
+                0,
+            );
     }
     let cmd = rec.end()?;
     queue.submit_simple(cmd)?.wait()?;
@@ -721,11 +719,7 @@ impl TlasBuilder {
     }
 
     /// Build the TLAS synchronously.
-    pub fn build(
-        self,
-        pool: &CommandPool,
-        queue: &AsyncQueue,
-    ) -> Result<AccelerationStructure> {
+    pub fn build(self, pool: &CommandPool, queue: &AsyncQueue) -> Result<AccelerationStructure> {
         let (accel, scratch) = self.record_build(pool, queue, /* async */ false)?;
         drop(scratch);
         Ok(accel)
@@ -915,8 +909,7 @@ fn encode_instances(instances: &[InstanceDesc]) -> Vec<u8> {
         out.extend_from_slice(&id_and_mask.to_le_bytes());
         // instance_shader_binding_table_record_offset_and_flags:
         // 24 bits sbt offset + 8 bits flags.
-        let sbt_and_flags: u32 =
-            (inst.sbt_offset & 0x00FF_FFFF) | ((inst.flags as u32) << 24);
+        let sbt_and_flags: u32 = (inst.sbt_offset & 0x00FF_FFFF) | ((inst.flags as u32) << 24);
         out.extend_from_slice(&sbt_and_flags.to_le_bytes());
         // acceleration_structure_reference: 8 bytes device address.
         out.extend_from_slice(&inst.blas_address.to_le_bytes());

@@ -250,7 +250,11 @@ impl FreeList {
         Ok((slot, gen))
     }
 
-    fn free(&mut self, slot: u32, expected_generation: u32) -> std::result::Result<(), BindlessError> {
+    fn free(
+        &mut self,
+        slot: u32,
+        expected_generation: u32,
+    ) -> std::result::Result<(), BindlessError> {
         let current = self.generation[slot as usize];
         if current != expected_generation {
             return Err(BindlessError::StaleHandle {
@@ -337,8 +341,8 @@ impl BindlessHeap {
             | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
             | vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
         let binding_flags = [binding_flags_value; 4];
-        let mut binding_flags_info = vk::DescriptorSetLayoutBindingFlagsCreateInfo::default()
-            .binding_flags(&binding_flags);
+        let mut binding_flags_info =
+            vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&binding_flags);
 
         let layout_ci = vk::DescriptorSetLayoutCreateInfo::default()
             .bindings(&bindings)
@@ -381,10 +385,7 @@ impl BindlessHeap {
             pool,
             set,
             sampled_free: Mutex::new(FreeList::new(config.sampled_images, "sampled_images")),
-            storage_image_free: Mutex::new(FreeList::new(
-                config.storage_images,
-                "storage_images",
-            )),
+            storage_image_free: Mutex::new(FreeList::new(config.storage_images, "storage_images")),
             sampler_free: Mutex::new(FreeList::new(config.samplers, "samplers")),
             storage_buffer_free: Mutex::new(FreeList::new(
                 config.storage_buffers,
@@ -419,7 +420,7 @@ impl BindlessHeap {
         }
     }
 
-    // Sampled images 
+    // Sampled images
 
     /// Register a sampled image.
     pub fn register_sampled_image(
@@ -482,7 +483,7 @@ impl BindlessHeap {
         }
     }
 
-    // Storage images 
+    // Storage images
 
     /// Register a storage image (writable from shaders).
     pub fn register_storage_image(
@@ -565,10 +566,7 @@ impl BindlessHeap {
     }
 
     /// Free a sampler slot.
-    pub fn free_sampler(
-        &self,
-        handle: BindlessHandle,
-    ) -> std::result::Result<(), BindlessError> {
+    pub fn free_sampler(&self, handle: BindlessHandle) -> std::result::Result<(), BindlessError> {
         self.sampler_free
             .lock()
             .unwrap()
@@ -594,7 +592,7 @@ impl BindlessHeap {
         }
     }
 
-    // Storage buffers 
+    // Storage buffers
 
     /// Register a storage buffer range.
     pub fn register_storage_buffer(

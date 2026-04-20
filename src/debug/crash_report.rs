@@ -7,10 +7,10 @@
 //! This is pure orchestration: every data source already exists and is
 //! already formatted by its own module. This module just bundles them.
 
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::fmt::Write;
 use std::io::Write as OtherWrite;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use ash::vk;
 
@@ -65,7 +65,10 @@ impl CrashReport {
 
     /// Default output path based on timestamp.
     pub fn default_path(&self) -> PathBuf {
-        PathBuf::from(format!("crash_report_{}.md", self.timestamp.replace(':', "-")))
+        PathBuf::from(format!(
+            "crash_report_{}.md",
+            self.timestamp.replace(':', "-")
+        ))
     }
 }
 
@@ -312,7 +315,11 @@ fn unix_epoch_to_utc(secs: u64) -> (i32, u32, u32, u32, u32, u32) {
     let s = sod % 60;
 
     let z = days + 719468;
-    let era = if z >= 0 { z / 146097 } else { (z - 146096) / 146097 };
+    let era = if z >= 0 {
+        z / 146097
+    } else {
+        (z - 146096) / 146097
+    };
     let doe = (z - era * 146097) as u64;
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
     let y = (yoe as i64) + era * 400;

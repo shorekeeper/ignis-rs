@@ -67,13 +67,14 @@ impl PipelineStats {
             (PipelineStats::CLIPPING_PRIMITIVES, "clip_primitives"),
             (PipelineStats::FRAGMENT_INVOCATIONS, "fs_invocations"),
             (PipelineStats::TESS_CONTROL_PATCHES, "tcs_patches"),
-            (PipelineStats::TESS_EVALUATION_INVOCATIONS, "tes_invocations"),
+            (
+                PipelineStats::TESS_EVALUATION_INVOCATIONS,
+                "tes_invocations",
+            ),
             (PipelineStats::COMPUTE_INVOCATIONS, "cs_invocations"),
         ];
         let bits = self.0;
-        ALL.iter()
-            .copied()
-            .filter(move |(f, _)| (bits & f.0) != 0)
+        ALL.iter().copied().filter(move |(f, _)| (bits & f.0) != 0)
     }
 }
 
@@ -88,7 +89,7 @@ impl std::ops::BitOr for PipelineStats {
 #[derive(Debug, Clone, Copy)]
 pub struct PipelineStatsScope {
     query_index: u32,
-//label_index: usize,
+    //label_index: usize,
 }
 
 /// Results of one scope after readback.
@@ -141,11 +142,7 @@ impl PipelineStatsPool {
     ///
     /// Each scope consumes one query slot. The total result buffer size is
     /// `max_scopes * enabled_counter_count * 8` bytes.
-    pub fn new(
-        shared: Arc<SharedState>,
-        enabled: PipelineStats,
-        max_scopes: u32,
-    ) -> Result<Self> {
+    pub fn new(shared: Arc<SharedState>, enabled: PipelineStats, max_scopes: u32) -> Result<Self> {
         let slot_count = enabled.count();
         let ci = vk::QueryPoolCreateInfo::default()
             .query_type(vk::QueryType::PIPELINE_STATISTICS)
@@ -167,9 +164,12 @@ impl PipelineStatsPool {
     /// recording session. Call from a command buffer, outside a render pass.
     pub fn reset(&mut self, rec: &CommandRecorder<'_>) {
         unsafe {
-            self.shared
-                .device
-                .cmd_reset_query_pool(rec.raw_buffer(), self.handle, 0, self.max_scopes);
+            self.shared.device.cmd_reset_query_pool(
+                rec.raw_buffer(),
+                self.handle,
+                0,
+                self.max_scopes,
+            );
         }
         self.next_query = 0;
         self.labels.clear();

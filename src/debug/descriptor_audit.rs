@@ -166,7 +166,7 @@ impl DescriptorAuditor {
 
         issues
     }
-    
+
     /// Audit every registered descriptor set and return all stale references.
     ///
     /// Intended for end-of-frame or crash-time snapshots. Iterates through

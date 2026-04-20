@@ -349,12 +349,8 @@ impl FrameGraph {
         for decl in &self.images {
             let realized = match &decl.source {
                 ImageSource::Transient(desc) => {
-                    let info = ImageInfo::texture_2d(
-                        desc.width,
-                        desc.height,
-                        desc.format,
-                        desc.usage,
-                    );
+                    let info =
+                        ImageInfo::texture_2d(desc.width, desc.height, desc.format, desc.usage);
                     let aspect = crate::format::format_aspect_mask(desc.format);
                     let image = Image::new(shared.clone(), allocator.clone(), &info)?;
                     RealizedImage {

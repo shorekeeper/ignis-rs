@@ -63,7 +63,8 @@ pub struct SharedState {
     ///
     /// Stored as `(instance_fn, handle)` so we can destroy it on `Drop`
     /// before `destroy_instance` to satisfy VUID-vkDestroyInstance-instance-00629.
-    pub(crate) debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
+    pub(crate) debug_messenger:
+        Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
 }
 
 // Compile-time assertion that SharedState is Send + Sync.

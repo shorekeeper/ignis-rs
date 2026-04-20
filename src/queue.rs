@@ -203,7 +203,7 @@ impl SubmitBuilder<'_> {
         // Capture submit backtrace for validation layer cross-reference.
         #[cfg(feature = "debug-tools")]
         let _bt_guard = crate::debug::validation_forensic::SubmitBacktraceGuard::new();
-        
+
         let device = &self.queue.shared.device;
 
         // Timeline path (Vulkan 1.2+).

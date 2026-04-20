@@ -136,10 +136,7 @@ fn run() -> ignis::Result<(u32, u32)> {
                     // Software renderers may not report accurate counts,
                     // so only assert on real hardware.
                     if !is_software_gpu {
-                        assert!(
-                            inv >= 64,
-                            "expected at least 64 invocations, got {inv}"
-                        );
+                        assert!(inv >= 64, "expected at least 64 invocations, got {inv}");
                     }
                 }
 
@@ -200,7 +197,10 @@ fn run() -> ignis::Result<(u32, u32)> {
         });
 
         let compiled = fg.compile(&ctx)?;
-        info(&format!("compiled plan lines: {}", compiled.dump_plan().lines().count()));
+        info(&format!(
+            "compiled plan lines: {}",
+            compiled.dump_plan().lines().count()
+        ));
         compiled.execute(&ctx, &pool, &gfx)?;
 
         assert!(executed.load(Ordering::SeqCst), "pass was not executed");
@@ -431,7 +431,10 @@ fn run() -> ignis::Result<(u32, u32)> {
 
                 match blas_result {
                     Ok(blas) => {
-                        info(&format!("BLAS device_address: {:#x}", blas.device_address()));
+                        info(&format!(
+                            "BLAS device_address: {:#x}",
+                            blas.device_address()
+                        ));
                         assert_ne!(blas.device_address(), 0);
 
                         // Build TLAS referencing that BLAS.
@@ -446,7 +449,10 @@ fn run() -> ignis::Result<(u32, u32)> {
                             })
                             .build(&rt_pool, &rt_gfx)?;
 
-                        info(&format!("TLAS device_address: {:#x}", tlas.device_address()));
+                        info(&format!(
+                            "TLAS device_address: {:#x}",
+                            tlas.device_address()
+                        ));
                         assert_ne!(tlas.device_address(), 0);
                         info("BLAS + TLAS built and queryable");
 
@@ -494,21 +500,28 @@ fn run() -> ignis::Result<(u32, u32)> {
                 let view = img.create_view(vk::ImageAspectFlags::COLOR)?;
 
                 // Register two sampled images and verify contiguous slots.
-                let h1 = heap
-                    .register_sampled_image(view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
+                let h1 =
+                    heap.register_sampled_image(view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
                 assert_eq!(h1.raw(), 0, "first slot should be 0");
 
-                let h2 = heap
-                    .register_sampled_image(view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
+                let h2 =
+                    heap.register_sampled_image(view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
                 assert_eq!(h2.raw(), 1, "second slot should be 1");
-                info(&format!("two sampled images registered at {}, {}", h1.raw(), h2.raw()));
+                info(&format!(
+                    "two sampled images registered at {}, {}",
+                    h1.raw(),
+                    h2.raw()
+                ));
 
                 // Free slot 0, then register again, verify reuse.
                 heap.free_sampled_image(h1);
-                let h3 = heap
-                    .register_sampled_image(view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
+                let h3 =
+                    heap.register_sampled_image(view, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)?;
                 assert_eq!(h3.raw(), 0, "freed slot should be reused");
-                info(&format!("slot 0 freed and reused: new handle = {}", h3.raw()));
+                info(&format!(
+                    "slot 0 freed and reused: new handle = {}",
+                    h3.raw()
+                ));
 
                 // Test storage buffer registration.
                 let buf = ctx.create_buffer(&ignis::BufferInfo::storage(

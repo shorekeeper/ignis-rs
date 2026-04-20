@@ -329,8 +329,7 @@ fn run() -> ignis::Result<()> {
     // ash 0.38 requires an Entry to build extension function tables.
     // The library is already loaded by ignis; this load() just retrieves
     // the same handle from the OS loader cache.
-    let entry = unsafe { ash::Entry::load() }
-        .map_err(|_| ignis::Error::LoadFailed)?;
+    let entry = unsafe { ash::Entry::load() }.map_err(|_| ignis::Error::LoadFailed)?;
     let surface_fn = ash::khr::win32_surface::Instance::new(&entry, ctx.instance());
 
     // SAFETY: we just loaded the surface ext function table from the same
@@ -341,7 +340,7 @@ fn run() -> ignis::Result<()> {
     let surface = unsafe { surface_fn.create_win32_surface(&surface_ci, None)? };
     println!("  [init] VkSurfaceKHR created: {:?}", surface);
 
-    // Create swapchain 
+    // Create swapchain
     let sc_config = ignis::SwapchainConfig {
         image_count: 2,
         preferred_present_mode: vk::PresentModeKHR::FIFO,
@@ -370,7 +369,7 @@ fn run() -> ignis::Result<()> {
         .build()?;
     println!("  [init] printf compute pipeline ready");
 
-    // Per-frame state 
+    // Per-frame state
     let gfx = ctx.queue(ignis::QueueType::Graphics)?;
     let frames_in_flight = image_count.min(2);
     let frame_sync = ctx.create_frame_sync(frames_in_flight)?;
@@ -402,15 +401,8 @@ fn run() -> ignis::Result<()> {
     {
         // Pump window messages (non-blocking).
         let mut msg: win::MSG = unsafe { std::mem::zeroed() };
-        while unsafe {
-            win::PeekMessageW(
-                &mut msg,
-                std::ptr::null_mut(),
-                0,
-                0,
-                win::PM_REMOVE,
-            )
-        } != 0
+        while unsafe { win::PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, win::PM_REMOVE) }
+            != 0
         {
             if msg.message == win::WM_QUIT {
                 win::WINDOW_CLOSED.store(true, Ordering::SeqCst);
@@ -540,11 +532,8 @@ fn run() -> ignis::Result<()> {
         // FrameSync which tracks fence lifetime for us.
         unsafe { gfx.submit_raw(&submits, frame.fence())? };
 
-        let present_result = swapchain.present(
-            raw_queue,
-            image_idx,
-            &[frame.render_finished_semaphore()],
-        );
+        let present_result =
+            swapchain.present(raw_queue, image_idx, &[frame.render_finished_semaphore()]);
         match present_result {
             Ok(_) => {}
             Err(ignis::Error::SwapchainOutOfDate) => {
@@ -588,10 +577,7 @@ fn run() -> ignis::Result<()> {
     );
     println!("  printf callbacks:  {printf_total}");
     if printf_total > 0 {
-        println!(
-            "  printf last stage: \"{}\"",
-            last_stage.lock().unwrap()
-        );
+        println!("  printf last stage: \"{}\"", last_stage.lock().unwrap());
     }
     println!();
 

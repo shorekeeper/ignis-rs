@@ -95,17 +95,16 @@ pub use debug::validation::{set_policy as set_validation_policy, ValidationPolic
 // Feature: debug-tools - forensic validation.
 #[cfg(feature = "debug-tools")]
 pub use debug::validation_forensic::{
-    clear_object_resolver, format_forensic_diagnostic, lookup_knowledge,
-    parse_validation_message, set_handler as set_validation_handler,
-    set_object_resolver, DiagnosticCategory, InvolvedObject, KnowledgeEntry, LayerSeverity,
-    ObjectResolver, ResolvedObject, SubmitBacktraceGuard, ValidationDiagnostic,
-    ValidationHandler,
+    clear_object_resolver, format_forensic_diagnostic, lookup_knowledge, parse_validation_message,
+    set_handler as set_validation_handler, set_object_resolver, DiagnosticCategory, InvolvedObject,
+    KnowledgeEntry, LayerSeverity, ObjectResolver, ResolvedObject, SubmitBacktraceGuard,
+    ValidationDiagnostic, ValidationHandler,
 };
 
 #[cfg(feature = "debug-tools")]
 pub use debug::vuid_kb::{
     register_runtime_entry as register_vuid_knowledge, static_base as vuid_knowledge_base,
-    RuntimeEntry as VuidRuntimeEntry, KnowledgeLookup as VuidKnowledge,
+    KnowledgeLookup as VuidKnowledge, RuntimeEntry as VuidRuntimeEntry,
 };
 // Frame graph: always available.
 pub mod framegraph;
@@ -116,8 +115,8 @@ pub use framegraph::{
 
 // Pipeline new sub-exports.
 pub use pipeline::accel_struct::{
-    AabbGeometry, AccelerationStructure, BlasBuilder, InstanceDesc, TlasBuilder, TriangleGeometry,
-    identity_transform,
+    identity_transform, AabbGeometry, AccelerationStructure, BlasBuilder, InstanceDesc,
+    TlasBuilder, TriangleGeometry,
 };
 pub use pipeline::bindless::{
     BindlessConfig, BindlessHandle, BindlessHeap, BINDING_SAMPLED_IMAGE, BINDING_SAMPLER,
