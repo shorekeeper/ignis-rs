@@ -17,13 +17,13 @@ $global:CommandCount = 0
 $global:ErrorCount = 0
 $global:LastResult = $null
 
-# ── Load command modules ─────────────────────────────────────────────────────
+# Load command modules 
 
 $commandDir = Join-Path $PSScriptRoot "wincommands"
 Get-ChildItem (Join-Path $commandDir "_*.ps1") -ErrorAction SilentlyContinue |
     ForEach-Object { . $_.FullName }
 
-# ── Trace directory ──────────────────────────────────────────────────────────
+# Trace directory
 
 $global:TraceDir = Join-Path $PSScriptRoot ".ignis_trace"
 $global:SessionId = Get-Date -Format "yyyyMMdd_HHmmss"
@@ -31,7 +31,7 @@ if (-not (Test-Path $global:TraceDir)) {
     New-Item -ItemType Directory -Path $global:TraceDir -Force | Out-Null
 }
 
-# ── Aliases ──────────────────────────────────────────────────────────────────
+# Aliases
 
 $global:Aliases = @{
     "b"  = "build"
@@ -50,7 +50,7 @@ $global:Aliases = @{
     "ul" = "unlock"
 }
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# Helpers
 
 function Resolve-CmdAlias {
     param([string]$Name)
@@ -305,7 +305,7 @@ function Show-Banner {
     Write-Host ""
 }
 
-# ── Cleanup on exit ──────────────────────────────────────────────────────────
+# Cleanup on exit
 
 $null = Register-EngineEvent PowerShell.Exiting -Action {
     if ($script:ActiveCargoProcess -and -not $script:ActiveCargoProcess.HasExited) {
@@ -313,7 +313,7 @@ $null = Register-EngineEvent PowerShell.Exiting -Action {
     }
 }
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# Main
 
 # Single command mode
 if ($DirectArgs -and $DirectArgs.Count -gt 0) {

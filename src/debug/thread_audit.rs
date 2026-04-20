@@ -195,7 +195,7 @@ fn format_violation(
     );
     diagnostic::write_pipe_empty(&mut o, &s);
 
-    // ── Thread comparison ──
+    // Thread comparison ──
     diagnostic::write_section(&mut o, &s, "Thread Conflict");
     diagnostic::write_pipe(
         &mut o,
@@ -223,7 +223,7 @@ fn format_violation(
         &format!("  operation:   {}", s.bold_red(accessor_op)),
     );
 
-    // ── Vulkan spec quote ──
+    // Vulkan spec quote ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Vulkan Specification");
     diagnostic::write_pipe_raw(&mut o, &s, &s.dim("§3.3.1 External Synchronization:"));
@@ -243,7 +243,7 @@ fn format_violation(
         &s.dim(" VkCommandPool, VkDescriptorPool, VkQueue\""),
     );
 
-    // ── Remediation options ──
+    // Remediation options ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Remediation Options (best to worst)");
     diagnostic::write_numbered(

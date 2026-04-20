@@ -9,7 +9,7 @@ Write-Host ""
 $passed = 0
 $failed = 0
 
-# ── Missing doc check ────────────────────────────────────────────────────────
+# Missing doc check
 
 Write-Host "      [1/3] Scanning for missing pub item docs ..." -ForegroundColor DarkGray
 
@@ -59,7 +59,7 @@ if ($missingDocs.Count -eq 0) {
     $passed++
 }
 
-# ── Module-level doc check ───────────────────────────────────────────────────
+# Module-level doc check 
 
 Write-Host ""
 Write-Host "      [2/3] Checking module-level //! docs ..." -ForegroundColor DarkGray
@@ -87,7 +87,7 @@ if ($modulesWithout.Count -eq 0) {
     $passed++ # Warning, not failure
 }
 
-# ── Doc build test ───────────────────────────────────────────────────────────
+# Doc build test
 
 Write-Host ""
 Write-Host -NoNewline "      [3/3] cargo doc --features full --no-deps ... "

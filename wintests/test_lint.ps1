@@ -9,7 +9,7 @@ Write-Host ""
 $passed = 0
 $failed = 0
 
-# ── rustfmt ──────────────────────────────────────────────────────────────────
+# rustfmt
 
 Write-Host -NoNewline "      [1/4] cargo fmt --check ... "
 $fmtOutput = cargo fmt --all -- --check 2>&1
@@ -24,7 +24,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "        Run 'cargo fmt' to fix formatting" -ForegroundColor Yellow
 }
 
-# ── cargo check ──────────────────────────────────────────────────────────────
+# cargo check
 
 Write-Host -NoNewline "      [2/4] cargo check --features full ... "
 $checkOutput = cargo check --features full 2>&1
@@ -39,7 +39,7 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-# ── clippy (full features) ───────────────────────────────────────────────────
+# clippy (full features) 
 
 Write-Host -NoNewline "      [3/4] cargo clippy --features full ... "
 $clippyOutput = cargo clippy --all-targets --features full -- `
@@ -71,7 +71,7 @@ if ($LASTEXITCODE -eq 0) {
     }
 }
 
-# ── doc warnings ─────────────────────────────────────────────────────────────
+# doc warnings
 
 Write-Host -NoNewline "      [4/4] cargo doc --features full ... "
 $docOutput = cargo doc --features full --no-deps 2>&1

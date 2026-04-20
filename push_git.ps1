@@ -7,7 +7,7 @@ Write-Host ""
 Write-Host "  IGNIS PUSH" -ForegroundColor Magenta
 Write-Host ""
 
-# ── Commit message ───────────────────────────────────────────────────────────
+# Commit message
 
 $msg = Read-Host "  Commit message"
 if ([string]::IsNullOrWhiteSpace($msg)) {
@@ -15,7 +15,7 @@ if ([string]::IsNullOrWhiteSpace($msg)) {
     exit 1
 }
 
-# ── Check working tree ───────────────────────────────────────────────────────
+# Check working tree
 
 $status = git status --porcelain 2>&1
 if (-not $status) {
@@ -26,7 +26,7 @@ if (-not $status) {
 $fileCount = ($status | Measure-Object).Count
 Write-Host "  $fileCount file(s) changed" -ForegroundColor DarkGray
 
-# ── Format ───────────────────────────────────────────────────────────────────
+# Format
 
 Write-Host -NoNewline "  cargo fmt ... "
 cargo fmt --all 2>&1 | Out-Null
@@ -36,7 +36,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "OK" -ForegroundColor Green
 
-# ── Clippy ───────────────────────────────────────────────────────────────────
+# Clippy
 
 Write-Host -NoNewline "  cargo clippy --features full ... "
 $clippyOut = cargo clippy --all-targets --features full -- `
@@ -69,7 +69,7 @@ if ($warnings -gt 0) {
     Write-Host "OK" -ForegroundColor Green
 }
 
-# ── Check ────────────────────────────────────────────────────────────────────
+# Check
 
 Write-Host -NoNewline "  cargo check --features full ... "
 cargo check --features full 2>&1 | Out-Null
@@ -79,7 +79,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "OK" -ForegroundColor Green
 
-# ── Stage + Commit + Push ────────────────────────────────────────────────────
+# Stage + Commit + Push 
 
 Write-Host ""
 Write-Host -NoNewline "  git add -A ... "
@@ -105,7 +105,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "OK" -ForegroundColor Green
 
-# ── Done ─────────────────────────────────────────────────────────────────────
+# Done
 
 Write-Host ""
 Write-Host "  Pushed to main: $msg" -ForegroundColor Green

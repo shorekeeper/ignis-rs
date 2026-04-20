@@ -81,6 +81,49 @@ pub mod interop;
 #[cfg(feature = "debug-tools")]
 pub mod debug;
 
+// Feature: debug-tools - new modules.
+#[cfg(feature = "debug-tools")]
+pub use debug::crash_report::{CrashReport, CrashReporter, DeviceLostHandler};
+#[cfg(feature = "debug-tools")]
+pub use debug::pipeline_stats::{
+    PipelineStats, PipelineStatsPool, PipelineStatsResult, PipelineStatsScope,
+};
+#[cfg(feature = "debug-tools")]
+pub use debug::shader_printf::{ShaderPrintfHandler, ShaderPrintfMessage, PRINTF_REGISTRY as _};
+#[cfg(feature = "debug-tools")]
+pub use debug::validation::{set_policy as set_validation_policy, ValidationPolicy};
+// Feature: debug-tools - forensic validation.
+#[cfg(feature = "debug-tools")]
+pub use debug::validation_forensic::{
+    clear_object_resolver, format_forensic_diagnostic, lookup_knowledge,
+    parse_validation_message, set_handler as set_validation_handler,
+    set_object_resolver, DiagnosticCategory, InvolvedObject, KnowledgeEntry, LayerSeverity,
+    ObjectResolver, ResolvedObject, SubmitBacktraceGuard, ValidationDiagnostic,
+    ValidationHandler,
+};
+
+#[cfg(feature = "debug-tools")]
+pub use debug::vuid_kb::{
+    register_runtime_entry as register_vuid_knowledge, static_base as vuid_knowledge_base,
+    RuntimeEntry as VuidRuntimeEntry, KnowledgeLookup as VuidKnowledge,
+};
+// Frame graph: always available.
+pub mod framegraph;
+pub use framegraph::{
+    BufferDesc, BufferHandle, CompiledFrameGraph, FrameGraph, ImageDesc, ImageHandle, PassBuilder,
+    PassExecute, Resolver,
+};
+
+// Pipeline new sub-exports.
+pub use pipeline::accel_struct::{
+    AabbGeometry, AccelerationStructure, BlasBuilder, InstanceDesc, TlasBuilder, TriangleGeometry,
+    identity_transform,
+};
+pub use pipeline::bindless::{
+    BindlessConfig, BindlessHandle, BindlessHeap, BINDING_SAMPLED_IMAGE, BINDING_SAMPLER,
+    BINDING_STORAGE_BUFFER, BINDING_STORAGE_IMAGE,
+};
+
 // Internal shared state (not re-exported).
 use device::SharedState;
 
@@ -1097,6 +1140,47 @@ impl Ignis {
         LifetimeTracker::new()
     }
 
+    /// Create a bindless descriptor heap.
+    ///
+    /// Requires the device to be created with descriptor indexing features
+    /// enabled. ignis does not enable these automatically; callers are
+    /// expected to pass the appropriate features through `ManagedConfig`
+    /// or ensure the external device has them enabled.
+    pub fn create_bindless_heap(&self, config: BindlessConfig) -> Result<BindlessHeap> {
+        BindlessHeap::new(Arc::clone(&self.shared), config)
+    }
+
+    /// Create a crash reporter that will bundle journal, breadcrumbs,
+    /// and descriptor audit data when `trigger` is called.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_crash_reporter(&self) -> Arc<CrashReporter> {
+        Arc::new(CrashReporter::new())
+    }
+
+    /// Create a pipeline statistics query pool.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_pipeline_stats_pool(
+        &self,
+        enabled: PipelineStats,
+        max_scopes: u32,
+    ) -> Result<PipelineStatsPool> {
+        PipelineStatsPool::new(Arc::clone(&self.shared), enabled, max_scopes)
+    }
+
+    /// Register a handler for shader printf messages emitted via
+    /// `debugPrintfEXT`. Replaces any previous handler.
+    ///
+    /// Has effect only when the context was created with
+    /// `ManagedConfig::enable_shader_printf(true)` or the external device
+    /// was set up with the printf validation feature.
+    #[cfg(feature = "debug-tools")]
+    pub fn set_shader_printf_handler<F>(&self, handler: F)
+    where
+        F: Fn(&ShaderPrintfMessage) + Send + Sync + 'static,
+    {
+        debug::shader_printf::PRINTF_REGISTRY.set(Box::new(handler));
+    }
+
     /// Create a production-grade hardened slab allocator.
     ///
     /// Structural hardening with near-zero overhead: size-class slabs,
@@ -1230,6 +1314,46 @@ impl Ignis {
     #[cfg(feature = "debug-tools")]
     pub fn create_gpu_profiler(&self, max_queries: u32) -> Result<GpuProfiler> {
         GpuProfiler::new(&self.shared, max_queries)
+    }
+    /// Install a global object resolver for forensic validation diagnostics.
+    ///
+    /// When the validation layer mentions a Vulkan handle, the resolver
+    /// is queried to turn that handle into a debug name and creation
+    /// location. This makes every error actionable because the user sees
+    /// their own identifier, not an anonymous hex handle.
+    ///
+    /// A simple resolver can be built from `LifetimeTracker`:
+    ///
+    /// ```rust,no_run
+    /// # use ignis::*;
+    /// # use std::sync::Arc;
+    /// # fn example(ctx: &Ignis, tracker: Arc<LifetimeTracker>) {
+    /// struct TrackerResolver(Arc<LifetimeTracker>);
+    /// impl ObjectResolver for TrackerResolver {
+    ///     fn resolve(&self, _vk_type: &str, _handle: u64) -> Option<ResolvedObject> {
+    ///         // Look up in tracker by handle (implementation detail).
+    ///         None
+    ///     }
+    /// }
+    /// ctx.set_object_resolver(Arc::new(TrackerResolver(tracker)));
+    /// # }
+    /// ```
+    #[cfg(feature = "debug-tools")]
+    pub fn set_object_resolver(&self, resolver: Arc<dyn ObjectResolver>) {
+        debug::validation_forensic::set_object_resolver(resolver);
+    }
+
+    /// Register a handler that receives every parsed validation diagnostic
+    /// in structured form, in addition to stderr output.
+    ///
+    /// Useful for routing validation errors into your application's own
+    /// error reporting system, logging, crash analytics, or test harness.
+    #[cfg(feature = "debug-tools")]
+    pub fn set_validation_handler<F>(&self, handler: F)
+    where
+        F: Fn(&ValidationDiagnostic) + Send + Sync + 'static,
+    {
+        debug::validation_forensic::set_handler(Box::new(handler));
     }
 }
 

@@ -258,7 +258,7 @@ fn format_aliasing_report(issues: &[AliasingIssue]) -> String {
         );
         diagnostic::write_pipe_empty(&mut o, &s);
 
-        // ── Execution timeline visualization ──
+        // Execution timeline visualization ──
         diagnostic::write_section(&mut o, &s, "Execution Timeline");
 
         let w_idx = issue.write_access.operation_index;

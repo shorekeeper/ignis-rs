@@ -649,7 +649,7 @@ fn format_state_error(
         &format!("expected:      {}", s.bold_green(expected)),
     );
 
-    // ── Visual state machine diagram ──
+    // Visual state machine diagram ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Command Buffer State Machine");
     diagnostic::write_pipe_raw(
@@ -718,7 +718,7 @@ fn format_state_error(
         ),
     );
 
-    // ── Command recording history ──
+    // Command recording history ──
     if !history.is_empty() {
         diagnostic::write_separator(&mut o, &s);
         diagnostic::write_section(
@@ -778,7 +778,7 @@ fn format_state_error(
         diagnostic::write_pipe_empty(&mut o, &s);
     }
 
-    // ── Targeted help ──
+    // Targeted help ──
     let help = match command {
         c if c.starts_with("draw") => {
             "draw commands require an active render pass or dynamic rendering\n\

@@ -9,7 +9,7 @@ Write-Host ""
 $passed = 0
 $failed = 0
 
-# ── Unit tests (full features) ───────────────────────────────────────────────
+# Unit tests (full features) 
 
 Write-Host -NoNewline "      [1/2] cargo test --lib --features full ... "
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -49,7 +49,7 @@ if ($exitCode -eq 0) {
     }
 }
 
-# ── Unit tests (no features) ─────────────────────────────────────────────────
+# Unit tests (no features) 
 
 Write-Host -NoNewline "      [2/2] cargo test --lib (no features) ... "
 $sw = [System.Diagnostics.Stopwatch]::StartNew()

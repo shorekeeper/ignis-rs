@@ -16,7 +16,7 @@ $ErrorActionPreference = "Continue"
 $global:CiStartTime = Get-Date
 $global:CiResults = @()
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# Helpers
 
 function Write-Banner {
     param([string]$Text, [string]$Color = "Magenta")
@@ -159,7 +159,7 @@ function Write-Summary {
     return ($totalFailed -eq 0)
 }
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# Main
 
 Write-Banner "IGNIS CI" "Magenta"
 Write-SystemInfo

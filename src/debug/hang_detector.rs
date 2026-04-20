@@ -447,7 +447,7 @@ fn format_hang_report(
     );
     diagnostic::write_pipe_empty(&mut o, &s);
 
-    // ── Timing breakdown ──
+    // Timing breakdown ──
     diagnostic::write_section(&mut o, &s, "Timing");
     diagnostic::write_kv(
         &mut o,
@@ -463,7 +463,7 @@ fn format_hang_report(
     );
     diagnostic::write_pipe_empty(&mut o, &s);
 
-    // ── Breadcrumb trail ──
+    // Breadcrumb trail ──
     if let Some(trail) = crumbs {
         diagnostic::write_section(&mut o, &s, "Breadcrumb Trail");
 
@@ -541,7 +541,7 @@ fn format_hang_report(
         );
     }
 
-    // ── Probable causes (ranked) ──
+    // Probable causes (ranked) ──
     diagnostic::write_separator(&mut o, &s);
     diagnostic::write_section(&mut o, &s, "Probable Causes (ranked by likelihood)");
     diagnostic::write_numbered(

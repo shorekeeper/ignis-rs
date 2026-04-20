@@ -24,3 +24,15 @@ full = ["swapchain", "slab-allocator", "interop", "tracking", "descriptors", "de
 [[example]]
 name = "smoke_test"
 path = "examples/smoke_test.rs"
+
+[[example]]
+name = "smoke_test_advanced"
+path = "examples/smoke_test_advanced.rs"
+
+[[example]]
+name = "window_frame_graph"
+path = "examples/window_frame_graph.rs"
+
+[[example]]
+name = "trigger_validation"
+path = "examples/trigger_validation.rs"

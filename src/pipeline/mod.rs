@@ -18,3 +18,9 @@ pub mod cache;
 pub mod descriptor;
 /// Render pass construction.
 pub mod renderpass;
+
+/// Acceleration structure builders (BLAS/TLAS) for ray tracing.
+pub mod accel_struct;
+
+/// Bindless descriptor heap using descriptor indexing.
+pub mod bindless;

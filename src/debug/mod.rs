@@ -55,3 +55,21 @@ pub mod debug_utils;
 
 /// GPU timestamp profiler with query pool management.
 pub mod profiler;
+
+/// `VK_EXT_debug_printf` integration with shader message routing.
+pub mod shader_printf;
+
+/// Validation layer bridging through the diagnostic formatter.
+pub mod validation;
+
+/// Automatic crash report generation on device lost.
+pub mod crash_report;
+
+/// Pipeline statistics queries (vertex/fragment/compute invocations, clipping, etc).
+pub mod pipeline_stats;
+
+/// Forensic analysis of validation layer messages with VUID knowledge base.
+pub mod validation_forensic;
+
+/// VUID knowledge base (static + runtime entries).
+pub mod vuid_kb;

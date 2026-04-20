@@ -7,7 +7,7 @@
 # Loaded by shell.ps1 at startup. Used by cmd_trace.ps1 and
 # automatically by Invoke-Command-Script for post-mortem analysis.
 
-# ── Structured Error Types ───────────────────────────────────────────────────
+# Structured Error Types 
 
 class TraceError {
     [string]$Code          # E0308, E0599, etc. Empty for non-rustc errors.
@@ -51,7 +51,7 @@ class TraceSession {
     [string[]]$RootCauses       # deduced root cause descriptions
 }
 
-# ── Cargo/Rustc Output Parser ────────────────────────────────────────────────
+# Cargo/Rustc Output Parser 
 
 function Parse-CargoOutput {
     <#
@@ -72,7 +72,7 @@ function Parse-CargoOutput {
     while ($i -lt $Lines.Count) {
         $line = $Lines[$i]
 
-        # ── Error block ──────────────────────────────────────────────────
+        # Error block 
         if ($line -match "^error(\[(E\d+)\])?:\s*(.+)") {
             $err = [TraceError]::new()
             $err.Code = if ($Matches[2]) { $Matches[2] } else { "" }
@@ -134,7 +134,7 @@ function Parse-CargoOutput {
             continue
         }
 
-        # ── Warning block ────────────────────────────────────────────────
+        # Warning block 
         if ($line -match "^warning(\[([\w:]+)\])?:\s*(.+)") {
             $warn = [TraceWarning]::new()
             $warn.Code = if ($Matches[2]) { $Matches[2] } else { "" }
@@ -166,7 +166,7 @@ function Parse-CargoOutput {
             continue
         }
 
-        # ── Test failure ─────────────────────────────────────────────────
+        # Test failure 
         # Handled separately in Parse-TestOutput
 
         $i++
@@ -235,7 +235,7 @@ function Parse-TestOutput {
     return [TraceTestFailure[]]$failures.ToArray()
 }
 
-# ── Analysis Engine ──────────────────────────────────────────────────────────
+# Analysis Engine
 
 function Analyze-TraceSession {
     <#
@@ -315,7 +315,7 @@ function Analyze-TraceSession {
     return $Session
 }
 
-# ── Formatting ───────────────────────────────────────────────────────────────
+# Formatting
 
 function Format-TraceError {
     <#
@@ -327,7 +327,7 @@ function Format-TraceError {
     $codeStr = if ($Err.Code) { "[$($Err.Code)] " } else { "" }
 
     Write-Host ""
-    Write-Host "    ┌─ Error #$Index $codeStr" -ForegroundColor Red
+    Write-Host "    ┌ Error #$Index $codeStr" -ForegroundColor Red
     Write-Host "    │  $($Err.Message)" -ForegroundColor White
 
     if ($Err.File) {
@@ -365,14 +365,14 @@ function Format-TraceError {
         Write-Host "    │  $explanation" -ForegroundColor DarkYellow
     }
 
-    Write-Host "    └─" -ForegroundColor DarkGray
+    Write-Host "    └" -ForegroundColor DarkGray
 }
 
 function Format-TraceTestFailure {
     param([TraceTestFailure]$Fail, [int]$Index)
 
     Write-Host ""
-    Write-Host "    ┌─ Test Failure #$Index" -ForegroundColor Red
+    Write-Host "    ┌ Test Failure #$Index" -ForegroundColor Red
     Write-Host "    │  $($Fail.TestName)" -ForegroundColor White
 
     if ($Fail.PanicLocation) {
@@ -391,7 +391,7 @@ function Format-TraceTestFailure {
         }
     }
 
-    Write-Host "    └─" -ForegroundColor DarkGray
+    Write-Host "    └" -ForegroundColor DarkGray
 }
 
 function Format-TraceWarningGroup {
@@ -573,7 +573,7 @@ function Format-SessionDiff {
     Write-Host "      Warnings: $oldWarns -> $newWarns ($warnSign$warnDelta)" -ForegroundColor $warnColor
 }
 
-# ── Error Code Encyclopedia ──────────────────────────────────────────────────
+# Error Code Encyclopedia 
 
 function Get-ErrorExplanation {
     <#
@@ -600,7 +600,7 @@ function Get-ErrorExplanation {
     }
 }
 
-# ── Full Trace Report ────────────────────────────────────────────────────────
+# Full Trace Report
 
 function Format-FullTraceReport {
     <#
@@ -640,7 +640,7 @@ function Format-FullTraceReport {
     # Errors
     if ($errCount -gt 0) {
         Write-Host ""
-        Write-Host "    ── Errors ──────────────────────────────────────────" -ForegroundColor Red
+        Write-Host "     Errors " -ForegroundColor Red
 
         for ($i = 0; $i -lt [math]::Min($errCount, 15); $i++) {
             Format-TraceError $parsed.Errors[$i] ($i + 1)
@@ -654,7 +654,7 @@ function Format-FullTraceReport {
     # Test failures
     if ($testFailCount -gt 0) {
         Write-Host ""
-        Write-Host "    ── Test Failures ───────────────────────────────────" -ForegroundColor Red
+        Write-Host "     Test Failures " -ForegroundColor Red
 
         for ($i = 0; $i -lt $testFailCount; $i++) {
             Format-TraceTestFailure $testFails[$i] ($i + 1)
@@ -664,7 +664,7 @@ function Format-FullTraceReport {
     # Warnings (collapsed)
     if ($warnCount -gt 0) {
         Write-Host ""
-        Write-Host "    ── Warnings ────────────────────────────────────────" -ForegroundColor Yellow
+        Write-Host "     Warnings " -ForegroundColor Yellow
         Format-TraceWarningGroup $parsed.Warnings
     }
 
@@ -694,7 +694,7 @@ function Format-FullTraceReport {
     # Quick fix suggestions
     if ($errCount -gt 0 -or $testFailCount -gt 0) {
         Write-Host ""
-        Write-Host "    ── Next Steps ──────────────────────────────────────" -ForegroundColor Cyan
+        Write-Host "     Next Steps " -ForegroundColor Cyan
         Write-Host ""
 
         if ($parsed.Errors | Where-Object { $_.Category -eq "compile" }) {
@@ -710,7 +710,7 @@ function Format-FullTraceReport {
     }
 }
 
-# ── Integration Hook ─────────────────────────────────────────────────────────
+# Integration Hook
 
 function Invoke-TraceAnalysis {
     <#
@@ -738,7 +738,7 @@ function Invoke-TraceAnalysis {
     }
 
     Write-Host ""
-    Write-Host "  ─── trace analysis ───────────────────────────────────" -ForegroundColor DarkCyan
+    Write-Host "   trace analysis " -ForegroundColor DarkCyan
 
     $parsed = Parse-CargoOutput $Output
     $testFails = Parse-TestOutput $Output
@@ -772,5 +772,5 @@ function Invoke-TraceAnalysis {
         }
     }
 
-    Write-Host "  ──────────────────────────────────────────────────────" -ForegroundColor DarkCyan
+    Write-Host " " -ForegroundColor DarkCyan
 }

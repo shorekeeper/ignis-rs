@@ -58,6 +58,12 @@ pub struct SharedState {
     pub(crate) is_managed: bool,
     /// Whether timeline semaphores are available (Vulkan 1.2+).
     pub(crate) supports_timelines: bool,
+    /// Debug utils messenger installed by ignis for validation/printf routing.
+    /// `None` in external mode or when debug-tools is disabled.
+    ///
+    /// Stored as `(instance_fn, handle)` so we can destroy it on `Drop`
+    /// before `destroy_instance` to satisfy VUID-vkDestroyInstance-instance-00629.
+    pub(crate) debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)>,
 }
 
 // Compile-time assertion that SharedState is Send + Sync.
@@ -76,6 +82,10 @@ impl Drop for SharedState {
                 // Wait for all device operations to complete before teardown.
                 let _ = self.device.device_wait_idle();
                 self.device.destroy_device(None);
+                // Messenger belongs to the instance, destroy it before the instance goes away.
+                if let Some((du, handle)) = self.debug_messenger.take() {
+                    du.destroy_debug_utils_messenger(handle, None);
+                }
                 self.instance.destroy_instance(None);
             }
         }
@@ -123,6 +133,28 @@ pub struct ManagedConfig {
     /// chosen device. If `None`, ignis uses a default heuristic that prefers
     /// discrete GPUs.
     pub device_selector: Option<Box<dyn Fn(&[PhysicalDeviceInfo]) -> usize + Send>>,
+    /// Enable shader printf through `VK_EXT_debug_printf`.
+    ///
+    /// When true, ignis will enable the validation layer printf feature
+    /// and the `VK_KHR_shader_non_semantic_info` device extension. Messages
+    /// from `debugPrintfEXT(...)` calls in shaders are routed to the
+    /// handler registered via `Ignis::set_shader_printf_handler`.
+    ///
+    /// Implies `validation = true`.
+    pub shader_printf: bool,
+    /// Enable the `pipeline_statistics_query` device feature.
+    ///
+    /// Required for [`PipelineStatsPool`](crate::PipelineStatsPool) to work.
+    /// Most desktop GPUs support this; software renderers may not.
+    pub pipeline_statistics: bool,
+    /// Enable descriptor indexing features (Vulkan 1.2 core).
+    ///
+    /// Required for [`BindlessHeap`](crate::BindlessHeap). Enables
+    /// `descriptor_binding_partially_bound`, `runtime_descriptor_array`,
+    /// `shader_sampled_image_array_non_uniform_indexing`, and the
+    /// `*_update_after_bind` flags for sampled/storage image and storage
+    /// buffer bindings.
+    pub descriptor_indexing: bool,
 }
 
 impl ManagedConfig {
@@ -140,6 +172,9 @@ impl ManagedConfig {
             instance_extensions: Vec::new(),
             device_extensions: Vec::new(),
             device_selector: None,
+            pipeline_statistics: false,
+            descriptor_indexing: false,
+            shader_printf: false,
         }
     }
 
@@ -164,6 +199,27 @@ impl ManagedConfig {
     /// Requires Vulkan 1.2 or later.
     pub fn enable_raytracing(mut self, enable: bool) -> Self {
         self.raytracing = enable;
+        self
+    }
+
+    /// Enable the `pipeline_statistics_query` base feature.
+    pub fn enable_pipeline_stats(mut self, enable: bool) -> Self {
+        self.pipeline_statistics = enable;
+        self
+    }
+
+    /// Enable descriptor indexing features.
+    pub fn enable_descriptor_indexing(mut self, enable: bool) -> Self {
+        self.descriptor_indexing = enable;
+        self
+    }
+
+    /// Enable shader printf. Implies validation.
+    pub fn enable_shader_printf(mut self, enable: bool) -> Self {
+        self.shader_printf = enable;
+        if enable {
+            self.validation = true;
+        }
         self
     }
 
@@ -305,13 +361,38 @@ pub(crate) fn create_managed_device(
 
     let instance_flags = base_instance_flags();
 
-    let instance_info = vk::InstanceCreateInfo::default()
+    // Enable validation features when shader printf is requested.
+    let printf_enables = [vk::ValidationFeatureEnableEXT::DEBUG_PRINTF];
+    let mut validation_features = vk::ValidationFeaturesEXT::default();
+    let mut instance_info = vk::InstanceCreateInfo::default()
         .application_info(&app_info)
         .enabled_layer_names(&layer_ptrs)
         .enabled_extension_names(&inst_ext_ptrs)
         .flags(instance_flags);
+    if config.shader_printf {
+        validation_features = validation_features.enabled_validation_features(&printf_enables);
+        instance_info = instance_info.push_next(&mut validation_features);
+    }
 
     let instance = unsafe { entry.create_instance(&instance_info, None)? };
+
+    // Install the debug utils messenger if debug-tools is active.
+    // This routes both validation messages and shader printf through
+    // the diagnostic formatter + printf registry. The handle is stored
+    // in SharedState so it survives to drop time and gets destroyed
+    // before the instance (VUID-vkDestroyInstance-instance-00629).
+    #[cfg(feature = "debug-tools")]
+    let debug_messenger = if config.validation || config.shader_printf {
+        match crate::debug::validation::install_messenger(&entry, &instance) {
+            Ok((du, handle)) => Some((du, handle)),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    #[cfg(not(feature = "debug-tools"))]
+    let debug_messenger: Option<(ash::ext::debug_utils::Instance, vk::DebugUtilsMessengerEXT)> =
+        None;
 
     // Step 3: Select physical device.
     let physical_devices = unsafe { instance.enumerate_physical_devices()? };
@@ -417,6 +498,10 @@ pub(crate) fn create_managed_device(
         dev_ext_ptrs.push(ash::khr::deferred_host_operations::NAME.as_ptr());
     }
 
+    if config.shader_printf {
+        dev_ext_ptrs.push(ash::khr::shader_non_semantic_info::NAME.as_ptr());
+    }
+
     // Step 6: Features chain.
     // We always enable Vulkan 1.2 features if the API version permits.
     let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::default();
@@ -433,12 +518,35 @@ pub(crate) fn create_managed_device(
             .descriptor_indexing(true);
     }
 
+    // Descriptor indexing features for bindless usage.
+    if config.descriptor_indexing {
+        vulkan12_features = vulkan12_features
+            .descriptor_indexing(true)
+            .descriptor_binding_partially_bound(true)
+            .descriptor_binding_update_unused_while_pending(true)
+            .runtime_descriptor_array(true)
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .shader_storage_image_array_non_uniform_indexing(true)
+            .shader_storage_buffer_array_non_uniform_indexing(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_storage_image_update_after_bind(true)
+            .descriptor_binding_storage_buffer_update_after_bind(true);
+    }
+
+    // Base physical device features. Must live on the stack across the
+    // vkCreateDevice call because features2.features embeds it by value.
+    let base_features =
+        vk::PhysicalDeviceFeatures::default().pipeline_statistics_query(config.pipeline_statistics);
+
     let mut rt_pipe_features =
         vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default().ray_tracing_pipeline(true);
     let mut accel_features =
         vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default().acceleration_structure(true);
 
-    let mut features2 = vk::PhysicalDeviceFeatures2::default().push_next(&mut vulkan12_features);
+    let mut features2 = vk::PhysicalDeviceFeatures2::default()
+        .features(base_features)
+        .push_next(&mut vulkan12_features);
+
     if config.raytracing {
         features2 = features2
             .push_next(&mut rt_pipe_features)
@@ -493,6 +601,7 @@ pub(crate) fn create_managed_device(
         rt_properties,
         is_managed: true,
         supports_timelines,
+        debug_messenger,
     };
 
     Ok((shared, allocations))
@@ -554,6 +663,7 @@ pub(crate) fn create_external_device(
         rt_properties,
         is_managed: false,
         supports_timelines,
+        debug_messenger: None,
     };
 
     Ok((shared, allocations))

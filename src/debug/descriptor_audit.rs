@@ -166,6 +166,20 @@ impl DescriptorAuditor {
 
         issues
     }
+    
+    /// Audit every registered descriptor set and return all stale references.
+    ///
+    /// Intended for end-of-frame or crash-time snapshots. Iterates through
+    /// every set the auditor knows about and collects issues from each.
+    pub fn audit_all(&self) -> Vec<DescriptorIssue> {
+        let mut all = Vec::new();
+        let keys: Vec<u64> = self.sets.keys().copied().collect();
+        for raw in keys {
+            let set = vk::DescriptorSet::from_raw(raw);
+            all.extend(self.validate_set(set));
+        }
+        all
+    }
 
     /// Generate a formatted report for detected issues.
     pub fn report(&self, issues: &[DescriptorIssue]) -> String {

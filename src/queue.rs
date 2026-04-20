@@ -112,6 +112,11 @@ impl AsyncQueue {
         submits: &[vk::SubmitInfo<'_>],
         fence: vk::Fence,
     ) -> Result<()> {
+        // Capture backtrace so the validation layer callback can show the
+        // user where submit was called from when it reports async errors.
+        #[cfg(feature = "debug-tools")]
+        let _bt_guard = crate::debug::validation_forensic::SubmitBacktraceGuard::new();
+
         let queue = self.handle.lock().unwrap();
         self.shared.device.queue_submit(*queue, submits, fence)?;
         Ok(())
@@ -195,6 +200,10 @@ impl SubmitBuilder<'_> {
     ///
     /// Returns a Vulkan error if fence creation or queue submission fails.
     pub fn build(self) -> Result<GpuFuture> {
+        // Capture submit backtrace for validation layer cross-reference.
+        #[cfg(feature = "debug-tools")]
+        let _bt_guard = crate::debug::validation_forensic::SubmitBacktraceGuard::new();
+        
         let device = &self.queue.shared.device;
 
         // Timeline path (Vulkan 1.2+).

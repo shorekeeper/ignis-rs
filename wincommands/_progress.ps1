@@ -114,7 +114,7 @@ class CargoStreamer {
     [void] ParseLine([string]$Line) {
         $null = $this.AllOutput.Add($Line)
 
-        # ── Download phase ───────────────────────────────────────────
+        # Download phase 
         if ($Line -match "Downloading\s+(\d+)\s+crate") {
             $this.DownloadTotal = [int]$Matches[1]
             $this.Phase = "fetch"
@@ -136,7 +136,7 @@ class CargoStreamer {
             return
         }
 
-        # ── Updating index ───────────────────────────────────────────
+        # Updating index 
         if ($Line -match "Updating") {
             $this.Phase = "fetch"
             $this.Bar.Detail = "updating index"
@@ -144,7 +144,7 @@ class CargoStreamer {
             return
         }
 
-        # ── Compile phase ────────────────────────────────────────────
+        # Compile phase 
         if ($Line -match "Compiling\s+(\S+)\s+v(\S+)") {
             $this.Phase = "compile"
             $this.CratesCompiled++
@@ -164,14 +164,14 @@ class CargoStreamer {
             return
         }
 
-        # ── Fresh (already compiled, still counts) ───────────────────
+        # Fresh (already compiled, still counts) 
         if ($Line -match "Fresh\s+(\S+)\s+v") {
             $this.CratesCompiled++
             $this.UpdateCompileProgress()
             return
         }
 
-        # ── Documenting ──────────────────────────────────────────────
+        # Documenting 
         if ($Line -match "Documenting\s+(\S+)") {
             $this.Phase = "compile"
             $this.CratesCompiled++
@@ -181,7 +181,7 @@ class CargoStreamer {
             return
         }
 
-        # ── Link phase ───────────────────────────────────────────────
+        # Link phase 
         if ($Line -match "Linking") {
             $this.Phase = "link"
             $this.Bar.Detail = "linking"
@@ -191,7 +191,7 @@ class CargoStreamer {
             return
         }
 
-        # ── Running (tests) ──────────────────────────────────────────
+        # Running (tests) 
         if ($Line -match "Running\s+(.+)") {
             $this.Phase = "test"
             $this.Bar.Detail = "running tests"
@@ -201,12 +201,12 @@ class CargoStreamer {
             return
         }
 
-        # ── Test result ──────────────────────────────────────────────
+        # Test result 
         if ($Line -match "test result:") {
             $this.Bar.Detail = ($Line.Trim().Length -gt 30) ? $Line.Trim().Substring(0, 27) + "..." : $Line.Trim()
         }
 
-        # ── Done ─────────────────────────────────────────────────────
+        # Done 
         if ($Line -match "Finished") {
             $this.Phase = "done"
             $this.Bar.Status = "done"
@@ -215,7 +215,7 @@ class CargoStreamer {
             return
         }
 
-        # ── Error/warning tracking ───────────────────────────────────
+        # Error/warning tracking 
         if ($Line -match "^error")   { $null = $this.Errors.Add($Line) }
         if ($Line -match "^warning") { $null = $this.Warnings.Add($Line) }
     }
@@ -489,7 +489,7 @@ function Invoke-MultiProgress {
     return $results
 }
 
-# ── Crate counter ────────────────────────────────────────────────────────────
+# Crate counter
 
 function Get-ExpectedCrateCount {
     <#
