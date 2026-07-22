@@ -1,0 +1,3 @@
+[submodule "ignis-viz"]
+	path = ignis-viz
+	url = https://github.com/shorekeeper/ignis-viz
