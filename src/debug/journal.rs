@@ -182,6 +182,26 @@ impl SubmissionJournal {
         let all: Vec<&JournalEntry> = entries.iter().collect();
         format_journal_dump(&all, &self.creation_time, Some(error))
     }
+
+    /// Iterate every entry under the internal lock without cloning.
+    ///
+    /// The closure receives a snapshot reference to each entry's
+    /// metadata. Suitable for bulk-importing into other trackers
+    /// (see [`CrossQueueTracker::import_from_journal`](super::cross_queue::CrossQueueTracker::import_from_journal)).
+    pub fn for_each_entry<F: FnMut(JournalEntryView)>(&self, mut f: F) {
+        let entries = self.entries.lock().unwrap();
+        for e in entries.iter() {
+            f(JournalEntryView {
+                queue_family: e.queue_family,
+                queue_index: e.queue_index,
+                label: e.label.as_str(),
+                command_buffers: e.command_buffers.as_slice(),
+                wait_semaphores: e.wait_semaphores.as_slice(),
+                signal_semaphores: e.signal_semaphores.as_slice(),
+                fence: e.fence,
+            });
+        }
+    }
 }
 
 fn format_journal_dump(
@@ -315,4 +335,26 @@ fn format_journal_dump(
     diagnostic::write_diagnostic_end(&mut o, &s, &sev);
 
     o
+}
+
+/// Read-only view over a single journal entry's metadata.
+///
+/// Returned to closures passed to [`SubmissionJournal::for_each_entry`].
+/// Holds borrows of the entry's internal `Vec`s under the journal's
+/// lock; do not retain across the closure call.
+pub struct JournalEntryView<'a> {
+    /// Queue family index.
+    pub queue_family: u32,
+    /// Queue index within family.
+    pub queue_index: u32,
+    /// Submission label.
+    pub label: &'a str,
+    /// Command buffer raw handles.
+    pub command_buffers: &'a [u64],
+    /// Wait semaphore raw handles.
+    pub wait_semaphores: &'a [u64],
+    /// Signal semaphore raw handles.
+    pub signal_semaphores: &'a [u64],
+    /// Fence raw handle.
+    pub fence: u64,
 }

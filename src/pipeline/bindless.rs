@@ -198,12 +198,14 @@ impl Default for BindlessConfig {
     }
 }
 
-/// Binding indices within the bindless set. Shader code must match.
+/// Binding slot for the sampled image array.
 pub const BINDING_SAMPLED_IMAGE: u32 = 0;
+/// Binding slot for the storage image array.
 pub const BINDING_STORAGE_IMAGE: u32 = 1;
+/// Binding slot for the sampler array.
 pub const BINDING_SAMPLER: u32 = 2;
+/// Binding slot for the storage buffer array.
 pub const BINDING_STORAGE_BUFFER: u32 = 3;
-
 //
 // Generation-tracked free list
 //

@@ -73,3 +73,30 @@ pub mod validation_forensic;
 
 /// VUID knowledge base (static + runtime entries).
 pub mod vuid_kb;
+
+/// VL diagnostic pipeline (filters, sinks, actions, scopes, capture).
+pub mod vl_pipeline;
+
+/// Allocation site profiler (heaptrack for GPU memory).
+pub mod alloc_profiler;
+
+/// Memory layout SVG visualizer.
+pub mod memory_viz;
+
+/// Device fault diagnostics: NV checkpoints, EXT fault info, AMD markers.
+pub mod device_fault;
+
+/// Validation Layer baseline capture and CI-grade diff.
+pub mod vl_baseline;
+
+/// GPU determinism verifier with hash-based output comparison.
+pub mod determinism;
+
+/// Cross-queue submission tracker with cycle and orphan detection.
+pub mod cross_queue;
+
+/// Sync DAG visualizer (DOT, Mermaid, SVG).
+pub mod sync_dag_viz;
+
+/// Shared rasterizer primitives (framebuffer, font, BMP encoder).
+pub mod raster_common;

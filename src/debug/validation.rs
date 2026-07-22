@@ -121,16 +121,18 @@ pub unsafe extern "system" fn debug_utils_callback(
         LayerSeverity::Info
     };
 
-    // Try forensic parse first. When it succeeds, we get a rich structured
-    // diagnostic with objects resolved, knowledge base explanation, and the
-    // submit backtrace if captured. Falls through to generic formatting
-    // when the message does not look like a VUID violation.
+    // Try forensic parse first; route through the VL pipeline if successful.
+    // The pipeline's default configuration is behaviorally identical to the
+    // pre-pipeline code (stderr + legacy handler dispatch), so applications
+    // that never call install() or use the macros see no change.
     if let Some(forensic) =
         validation_forensic::parse_validation_message(raw_msg, msg_id_name, layer_severity)
     {
-        let formatted = validation_forensic::format_forensic_diagnostic(&forensic);
-        eprint!("{formatted}");
-        validation_forensic::dispatch_to_handler(&forensic);
+        // Feed every parsed VUID into the baseline collector before any
+        // user-configurable filtering runs. The baseline reflects raw layer
+        // output regardless of suppression rules.
+        super::vl_baseline::feed(&forensic);
+        super::vl_pipeline::global().process(forensic);
         return vk::FALSE;
     }
 

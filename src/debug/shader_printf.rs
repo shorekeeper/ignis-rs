@@ -71,6 +71,10 @@ impl PrintfRegistry {
     }
 }
 
+/// Process-wide registry that receives shader printf messages parsed
+/// from the validation layer. Use
+/// [`Ignis::set_shader_printf_handler`](crate::Ignis::set_shader_printf_handler)
+/// to install a handler instead of touching the registry directly.
 pub static PRINTF_REGISTRY: PrintfRegistry = PrintfRegistry::new();
 
 /// Attempt to parse a validation layer message that originated from

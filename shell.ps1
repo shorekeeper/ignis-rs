@@ -48,6 +48,14 @@ $global:Aliases = @{
     "p"  = "prof"
     "!!" = "repeat"
     "ul" = "unlock"
+    "st" = "stub"
+    "li" = "live"
+    "mu" = "mux"
+    "w"  = "watch"
+    "v"  = "vuid"
+    "th" = "theme"
+    "cr" = "crash"
+    "ch" = "chrome"
 }
 
 # Helpers
@@ -284,24 +292,33 @@ function Invoke-Command-Script {
 }
 
 function Show-Banner {
-    $ver = "1.0"
-    $title = "IGNIS COMMAND SHELL v$ver"
-    $hint  = "type 'help' for commands, 'q' to quit"
-    $inner = 44
-
-    $tPad = $inner - $title.Length
-    $tL = [math]::Floor($tPad / 2)
-    $tR = $tPad - $tL
-
-    $hPad = $inner - $hint.Length
-    $hL = [math]::Floor($hPad / 2)
-    $hR = $hPad - $hL
+    # Boot banner: identity line, environment summary, and capability hints.
+    # Everything shown here must be obtainable in single-digit milliseconds;
+    # slow probes (vulkaninfo, rustc) are never run at startup. The GPU name
+    # is read from the cache that cmd_gpu maintains and is simply absent
+    # until the user has run 'gpu' once.
+    $e = [char]0x1b
+    $crateName = 'ignis'
+    $crateVer = ''
+    if (Test-Path 'Cargo.toml') {
+        $raw = Get-Content 'Cargo.toml' -Raw
+        if ($raw -match '(?m)^name\s*=\s*"([^"]+)"') { $crateName = $Matches[1] }
+        if ($raw -match '(?m)^version\s*=\s*"([^"]+)"') { $crateVer = $Matches[1] }
+    }
+    $gpuName = ''
+    $gpuCache = Join-Path $PSScriptRoot '.ignis_trace\gpu_cache.txt'
+    if (Test-Path $gpuCache) {
+        $gpuName = (Get-Content $gpuCache -ErrorAction SilentlyContinue | Select-Object -First 1)
+    }
+    $cmdCount = (Get-ChildItem (Join-Path $PSScriptRoot 'wincommands\cmd_*.ps1') -ErrorAction SilentlyContinue).Count
 
     Write-Host ""
-    Write-Host "  $([char]0x2554)$("$([char]0x2550)" * $inner)$([char]0x2557)" -ForegroundColor DarkCyan
-    Write-Host "  $([char]0x2551)$(" " * $tL)$title$(" " * $tR)$([char]0x2551)" -ForegroundColor Cyan
-    Write-Host "  $([char]0x2551)$(" " * $hL)$hint$(" " * $hR)$([char]0x2551)" -ForegroundColor DarkGray
-    Write-Host "  $([char]0x255A)$("$([char]0x2550)" * $inner)$([char]0x255D)" -ForegroundColor DarkCyan
+    Write-Host "  $e[38;2;90;170;255m██$e[38;2;110;180;250m██$e[38;2;130;190;245m██$e[0m " -NoNewline
+    Write-Host "IGNIS COMMAND SHELL" -ForegroundColor Cyan -NoNewline
+    Write-Host "  $crateName $crateVer" -ForegroundColor DarkGray
+    Write-Host "         pwsh $($global:PSVersionTable.PSVersion)  |  $cmdCount commands" -ForegroundColor DarkGray -NoNewline
+    if ($gpuName) { Write-Host "  |  $gpuName" -ForegroundColor DarkGray } else { Write-Host "" }
+    Write-Host "         help  |  Tab complete  |  Ctrl+P palette  |  q quit" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -340,9 +357,21 @@ while ($true) {
 
     $line = $null
     try {
-        $line = Read-Host
+        # The custom editor provides Tab completion, history, and the Ctrl+P
+        # palette; Read-Host remains the fallback when the helper module is
+        # absent or input is non-interactive.
+        if (Get-Command Read-IgnisLine -ErrorAction SilentlyContinue) {
+            $line = Read-IgnisLine
+        } else {
+            $line = Read-Host
+        }
     } catch {
+        # An input-layer failure must never be silent: this catch previously
+        # swallowed editor exceptions wholesale, which turned a history bug
+        # into a shell that accepted input and dispatched nothing, with no
+        # error anywhere. Surface the message and continue.
         Write-Host ""
+        Write-Host "  input error: $($_.Exception.Message)" -ForegroundColor Red
         continue
     }
 

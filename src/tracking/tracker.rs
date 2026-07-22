@@ -137,6 +137,28 @@ impl ImageUsageContext {
             } => (layout, access, stage),
         }
     }
+
+    /// Vulkan image usage flag(s) that the image must have at creation
+    /// time for this access pattern to be legal. Used by
+    /// [`Ignis::create_image_with_intent`](crate::Ignis::create_image_with_intent)
+    /// for compile-time-style validation of image usage configurations.
+    pub fn required_usage(self) -> vk::ImageUsageFlags {
+        match self {
+            Self::ColorAttachment | Self::PresentSrc => vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            Self::DepthStencilAttachment | Self::DepthStencilReadOnly => {
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+            }
+            Self::FragmentShaderRead | Self::VertexShaderRead | Self::ComputeShaderRead => {
+                vk::ImageUsageFlags::SAMPLED
+            }
+            Self::ComputeShaderWrite | Self::ComputeShaderReadWrite => {
+                vk::ImageUsageFlags::STORAGE
+            }
+            Self::TransferSrc => vk::ImageUsageFlags::TRANSFER_SRC,
+            Self::TransferDst => vk::ImageUsageFlags::TRANSFER_DST,
+            Self::General | Self::Custom { .. } => vk::ImageUsageFlags::empty(),
+        }
+    }
 }
 
 /// How a buffer is being used (determines access mask and stage).
@@ -222,6 +244,26 @@ impl BufferUsageContext {
                 vk::PipelineStageFlags::DRAW_INDIRECT,
             ),
             Self::Custom { access, stage } => (access, stage),
+        }
+    }
+
+    /// Vulkan buffer usage flag(s) that the buffer must have at creation
+    /// time for this access pattern to be legal. Used by
+    /// [`Ignis::create_buffer_with_intent`](crate::Ignis::create_buffer_with_intent).
+    pub fn required_usage(self) -> vk::BufferUsageFlags {
+        match self {
+            Self::VertexInput => vk::BufferUsageFlags::VERTEX_BUFFER,
+            Self::IndexInput => vk::BufferUsageFlags::INDEX_BUFFER,
+            Self::UniformVertex | Self::UniformFragment | Self::UniformCompute => {
+                vk::BufferUsageFlags::UNIFORM_BUFFER
+            }
+            Self::StorageComputeRead
+            | Self::StorageComputeWrite
+            | Self::StorageComputeReadWrite => vk::BufferUsageFlags::STORAGE_BUFFER,
+            Self::TransferSrc => vk::BufferUsageFlags::TRANSFER_SRC,
+            Self::TransferDst => vk::BufferUsageFlags::TRANSFER_DST,
+            Self::IndirectDraw => vk::BufferUsageFlags::INDIRECT_BUFFER,
+            Self::Custom { .. } => vk::BufferUsageFlags::empty(),
         }
     }
 }
@@ -703,5 +745,72 @@ impl CommandRecorder<'_> {
                 &[],
             );
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn required_usage_color_attachment_includes_attachment_flag() {
+        let f = ImageUsageContext::ColorAttachment.required_usage();
+        assert!(f.contains(vk::ImageUsageFlags::COLOR_ATTACHMENT));
+    }
+
+    #[test]
+    fn required_usage_shader_read_implies_sampled() {
+        for ctx in [
+            ImageUsageContext::FragmentShaderRead,
+            ImageUsageContext::VertexShaderRead,
+            ImageUsageContext::ComputeShaderRead,
+        ] {
+            assert!(ctx.required_usage().contains(vk::ImageUsageFlags::SAMPLED));
+        }
+    }
+
+    #[test]
+    fn required_usage_compute_write_implies_storage() {
+        assert!(ImageUsageContext::ComputeShaderWrite
+            .required_usage()
+            .contains(vk::ImageUsageFlags::STORAGE));
+    }
+
+    #[test]
+    fn required_usage_buffer_indirect_includes_indirect() {
+        assert!(BufferUsageContext::IndirectDraw
+            .required_usage()
+            .contains(vk::BufferUsageFlags::INDIRECT_BUFFER));
+    }
+
+    #[test]
+    fn required_usage_transfer_dst_image() {
+        assert!(ImageUsageContext::TransferDst
+            .required_usage()
+            .contains(vk::ImageUsageFlags::TRANSFER_DST));
+    }
+
+    #[test]
+    fn required_usage_general_returns_empty() {
+        // General is a permissive layout; we cannot statically infer the
+        // required usage flags from it. The check should accept any
+        // configuration silently rather than mis-flag valid GENERAL use.
+        assert_eq!(
+            ImageUsageContext::General.required_usage(),
+            vk::ImageUsageFlags::empty()
+        );
+    }
+
+    #[test]
+    fn required_usage_buffer_uniform_variants_match() {
+        // All three uniform contexts (vertex, fragment, compute) demand
+        // the same UNIFORM_BUFFER usage flag at creation time.
+        let v = BufferUsageContext::UniformVertex.required_usage();
+        let f = BufferUsageContext::UniformFragment.required_usage();
+        let c = BufferUsageContext::UniformCompute.required_usage();
+        assert_eq!(v, vk::BufferUsageFlags::UNIFORM_BUFFER);
+        assert_eq!(f, vk::BufferUsageFlags::UNIFORM_BUFFER);
+        assert_eq!(c, vk::BufferUsageFlags::UNIFORM_BUFFER);
     }
 }

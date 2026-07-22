@@ -19,7 +19,9 @@ interop = []
 tracking = []
 descriptors = []
 debug-tools = []
-full = ["swapchain", "slab-allocator", "interop", "tracking", "descriptors", "debug-tools"]
+live-link = []
+debug-window = ["swapchain", "debug-tools"]
+full = ["swapchain", "slab-allocator", "interop", "tracking", "descriptors", "debug-tools", "debug-window", "live-link"]
 
 [[example]]
 name = "smoke_test"
@@ -36,3 +38,47 @@ path = "examples/window_frame_graph.rs"
 [[example]]
 name = "trigger_validation"
 path = "examples/trigger_validation.rs"
+
+[[example]]
+name = "animated_window"
+path = "examples/animated_window.rs"
+
+[[example]]
+name = "vl_pipeline_showcase"
+path = "examples/vl_pipeline_showcase.rs"
+
+[[example]]
+name = "alloc_profiler"
+path = "examples/alloc_profiler.rs"
+
+[[example]]
+name = "shader_reflection_demo"
+path = "examples/shader_reflection_demo.rs"
+
+[[example]]
+name = "debug_window_demo"
+path = "examples/debug_window_demo.rs"
+
+[[example]]
+name = "device_fault_demo"
+path = "examples/device_fault_demo.rs"
+
+[[example]]
+name = "vl_baseline_demo"
+path = "examples/vl_baseline_demo.rs"
+
+[[example]]
+name = "determinism_demo"
+path = "examples/determinism_demo.rs"
+
+[[example]]
+name = "cross_queue_demo"
+path = "examples/cross_queue_demo.rs"
+
+[[example]]
+name = "sync_dag_viz_demo"
+path = "examples/sync_dag_viz_demo.rs"
+
+[[example]]
+name = "live_link_demo"
+path = "examples/live_link_demo.rs"

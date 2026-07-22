@@ -18,6 +18,7 @@ use crate::error::{Error, Result};
 /// In managed mode, dropping the last `Arc<SharedState>` will wait for
 /// the device to become idle and then destroy the device and instance.
 /// In external mode, no destruction occurs.
+#[allow(dead_code)]
 pub struct SharedState {
     /// Vulkan entry point, always loaded.
     /// In managed mode created during initialization, in external mode
@@ -156,6 +157,13 @@ pub struct ManagedConfig {
     /// `*_update_after_bind` flags for sampled/storage image and storage
     /// buffer bindings.
     pub descriptor_indexing: bool,
+
+    /// Enable device fault diagnostic extensions: `VK_EXT_device_fault`,
+    /// `VK_NV_device_diagnostic_checkpoints`, and `VK_AMD_buffer_marker`.
+    /// Each is requested only if the physical device advertises it; non-
+    /// supported extensions are silently skipped. Inspect availability at
+    /// runtime via [`DeviceFaultRecorder`](crate::debug::device_fault::DeviceFaultRecorder).
+    pub device_fault: bool,
 }
 
 impl ManagedConfig {
@@ -176,6 +184,7 @@ impl ManagedConfig {
             pipeline_statistics: false,
             descriptor_indexing: false,
             shader_printf: false,
+            device_fault: false,
         }
     }
 
@@ -221,6 +230,12 @@ impl ManagedConfig {
         if enable {
             self.validation = true;
         }
+        self
+    }
+
+    /// Enable device fault diagnostic extensions if available.
+    pub fn enable_device_fault(mut self, enable: bool) -> Self {
+        self.device_fault = enable;
         self
     }
 
@@ -501,6 +516,32 @@ pub(crate) fn create_managed_device(
 
     if config.shader_printf {
         dev_ext_ptrs.push(ash::khr::shader_non_semantic_info::NAME.as_ptr());
+    }
+
+    // Device fault extensions: each is requested only if the physical
+    // device supports it. Unsupported extensions are quietly skipped to
+    // avoid vkCreateDevice failures on hardware that lacks vendor parts.
+    if config.device_fault {
+        let supported_exts = unsafe {
+            instance
+                .enumerate_device_extension_properties(physical_device)
+                .unwrap_or_default()
+        };
+        let has = |name: &CStr| -> bool {
+            supported_exts.iter().any(|p| {
+                let n = unsafe { CStr::from_ptr(p.extension_name.as_ptr()) };
+                n == name
+            })
+        };
+        if has(ash::ext::device_fault::NAME) {
+            dev_ext_ptrs.push(ash::ext::device_fault::NAME.as_ptr());
+        }
+        if has(ash::nv::device_diagnostic_checkpoints::NAME) {
+            dev_ext_ptrs.push(ash::nv::device_diagnostic_checkpoints::NAME.as_ptr());
+        }
+        if has(ash::amd::buffer_marker::NAME) {
+            dev_ext_ptrs.push(ash::amd::buffer_marker::NAME.as_ptr());
+        }
     }
 
     // Step 6: Features chain.

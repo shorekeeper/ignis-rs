@@ -49,7 +49,7 @@
 //! // ... record commands, submit via gfx.submit(), await GpuFuture ...
 //! ```
 
-// Std imports.
+// Standard library imports.
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -71,6 +71,19 @@ pub mod memory;
 pub mod pipeline;
 pub mod tracking;
 
+// Always-available modules.
+pub mod framegraph;
+pub mod resource_trace;
+pub mod shader_reflection;
+
+// Macros for VL pipeline configuration.
+// These are always compiled (no feature gate on the module) because
+// #[macro_export] places them at crate root regardless. Their bodies
+// reference `$crate::debug::vl_pipeline`, which is only present with
+// the `debug-tools` feature; using a macro without the feature produces
+// a clear "unresolved module" compile error.
+pub mod vl_macros;
+
 // Feature-gated top-level modules.
 #[cfg(feature = "swapchain")]
 pub mod surface;
@@ -81,53 +94,20 @@ pub mod interop;
 #[cfg(feature = "debug-tools")]
 pub mod debug;
 
-// Feature: debug-tools - new modules.
 #[cfg(feature = "debug-tools")]
-pub use debug::crash_report::{CrashReport, CrashReporter, DeviceLostHandler};
-#[cfg(feature = "debug-tools")]
-pub use debug::pipeline_stats::{
-    PipelineStats, PipelineStatsPool, PipelineStatsResult, PipelineStatsScope,
-};
-#[cfg(feature = "debug-tools")]
-pub use debug::shader_printf::{ShaderPrintfHandler, ShaderPrintfMessage, PRINTF_REGISTRY as _};
-#[cfg(feature = "debug-tools")]
-pub use debug::validation::{set_policy as set_validation_policy, ValidationPolicy};
-// Feature: debug-tools - forensic validation.
-#[cfg(feature = "debug-tools")]
-pub use debug::validation_forensic::{
-    clear_object_resolver, format_forensic_diagnostic, lookup_knowledge, parse_validation_message,
-    set_handler as set_validation_handler, set_object_resolver, DiagnosticCategory, InvolvedObject,
-    KnowledgeEntry, LayerSeverity, ObjectResolver, ResolvedObject, SubmitBacktraceGuard,
-    ValidationDiagnostic, ValidationHandler,
-};
+pub mod shader_watcher;
 
-#[cfg(feature = "debug-tools")]
-pub use debug::vuid_kb::{
-    register_runtime_entry as register_vuid_knowledge, static_base as vuid_knowledge_base,
-    KnowledgeLookup as VuidKnowledge, RuntimeEntry as VuidRuntimeEntry,
-};
-// Frame graph: always available.
-pub mod framegraph;
-pub use framegraph::{
-    BufferDesc, BufferHandle, CompiledFrameGraph, FrameGraph, ImageDesc, ImageHandle, PassBuilder,
-    PassExecute, Resolver,
-};
+#[cfg(feature = "debug-window")]
+pub mod debug_window;
 
-// Pipeline new sub-exports.
-pub use pipeline::accel_struct::{
-    identity_transform, AabbGeometry, AccelerationStructure, BlasBuilder, InstanceDesc,
-    TlasBuilder, TriangleGeometry,
-};
-pub use pipeline::bindless::{
-    BindlessConfig, BindlessHandle, BindlessHeap, BINDING_SAMPLED_IMAGE, BINDING_SAMPLER,
-    BINDING_STORAGE_BUFFER, BINDING_STORAGE_IMAGE,
-};
+#[cfg(feature = "live-link")]
+pub mod live_link;
 
 // Internal shared state (not re-exported).
 use device::SharedState;
 
 // Core re-exports: error handling.
-pub use error::{Error, Result};
+pub use error::{Error, Result, WithContext};
 
 // Core re-exports: device and configuration.
 pub use device::{
@@ -136,7 +116,7 @@ pub use device::{
 
 // Core re-exports: queues and async submission.
 pub use queue::{AsyncQueue, GpuFuture, SubmitBuilder};
-pub use sync::{FrameContext, FrameSync};
+pub use sync::{FencePool, FrameContext, FrameSync};
 pub use tracking::timeline::{QueueTimeline, TimelineWatcher};
 pub use tracking::watcher::FenceWatcher;
 
@@ -148,7 +128,11 @@ pub use command::{
 
 // Core re-exports: memory and allocation.
 pub use memory::allocator::{Allocation, Allocator, BlockAllocator, DedicatedAllocator};
+pub use memory::frame_alloc::FrameAllocator;
+pub use memory::readback::ReadbackRequest;
 pub use memory::resources::{Buffer, BufferInfo, Image, ImageInfo, MemoryLocation};
+pub use memory::staging::{StagingRegion, StagingRing};
+pub use memory::typed::TypedBuffer;
 
 // Core re-exports: format utilities.
 pub use format::{
@@ -156,32 +140,41 @@ pub use format::{
     is_compressed_format, is_depth_format, is_stencil_format, mip_levels_for_size,
 };
 
-// Core re-exports: staging, frame alloc, typed buffer, readback.
-pub use memory::frame_alloc::FrameAllocator;
-pub use memory::readback::ReadbackRequest;
-pub use memory::staging::{StagingRegion, StagingRing};
-pub use memory::typed::TypedBuffer;
-
-// Core re-exports: pipeline cache and layout.
-pub use pipeline::builders::{PipelineLayoutBuilder, PipelineLayoutHandle};
-pub use pipeline::cache::PipelineCache;
-
-// Core re-exports: fence pool.
-pub use sync::FencePool;
-
-// Core re-exports: error context.
-pub use error::WithContext;
-
 // Core re-exports: shaders, pipelines, render passes.
-pub use pipeline::builders::{
-    ComputePipelineBuilder, GraphicsPipelineBuilder, RayTracingPipeline, RayTracingPipelineBuilder,
-    ShaderBindingTableLayout, ShaderGroup,
+pub use pipeline::accel_struct::{
+    identity_transform, AabbGeometry, AccelerationStructure, BlasBuilder, InstanceDesc,
+    TlasBuilder, TriangleGeometry,
 };
+pub use pipeline::bindless::{
+    BindlessConfig, BindlessHandle, BindlessHeap, BINDING_SAMPLED_IMAGE, BINDING_SAMPLER,
+    BINDING_STORAGE_BUFFER, BINDING_STORAGE_IMAGE,
+};
+pub use pipeline::builders::{
+    ComputePipelineBuilder, GraphicsPipelineBuilder, PipelineLayoutBuilder, PipelineLayoutHandle,
+    RayTracingPipeline, RayTracingPipelineBuilder, ShaderBindingTableLayout, ShaderGroup,
+};
+pub use pipeline::cache::PipelineCache;
 pub use pipeline::renderpass::{
     AttachmentConfig, AttachmentRef, RenderPassBuilder, RenderPassHandle, SubpassConfig,
     SubpassDependency,
 };
 pub use shader::ShaderModule;
+
+// Core re-exports: frame graph.
+pub use framegraph::{
+    BufferDesc, BufferHandle, CompiledFrameGraph, FrameGraph, ImageDesc, ImageHandle, PassBuilder,
+    PassExecute, Resolver,
+};
+
+// Core re-exports: shader reflection.
+pub use shader_reflection::{
+    descriptor_set_layouts_from, push_constant_ranges_from, reflect, DescriptorBinding,
+    EntryPoint as ReflectionEntryPoint, PushConstantRange as ReflectionPushConstantRange,
+    ShaderReflection, SpecConstant, VertexInput,
+};
+
+// Core re-exports: resource trace.
+pub use resource_trace::{ResourceTrace, TraceEvent, TraceEventKind, TraceStats};
 
 // Feature: tracking.
 #[cfg(feature = "tracking")]
@@ -243,6 +236,81 @@ pub use debug::pipeline_audit::{PipelineAuditor, PipelineIssue};
 pub use debug::profiler::{GpuProfiler, ScopeHandle, ScopeResult};
 #[cfg(feature = "debug-tools")]
 pub use debug::thread_audit::{AuditedPool, ThreadViolationAction};
+
+// Feature: debug-tools - additional tooling.
+#[cfg(feature = "debug-tools")]
+pub use debug::crash_report::{CrashReport, CrashReporter, DeviceLostHandler};
+#[cfg(feature = "debug-tools")]
+pub use debug::pipeline_stats::{
+    PipelineStats, PipelineStatsPool, PipelineStatsResult, PipelineStatsScope,
+};
+#[cfg(feature = "debug-tools")]
+pub use debug::shader_printf::{ShaderPrintfHandler, ShaderPrintfMessage, PRINTF_REGISTRY as _};
+#[cfg(feature = "debug-tools")]
+pub use debug::validation::{set_policy as set_validation_policy, ValidationPolicy};
+
+// Feature: debug-tools - forensic validation.
+#[cfg(feature = "debug-tools")]
+pub use debug::validation_forensic::{
+    clear_object_resolver, format_forensic_diagnostic, lookup_knowledge, parse_validation_message,
+    set_handler as set_validation_handler, set_object_resolver, DiagnosticCategory, InvolvedObject,
+    KnowledgeEntry, LayerSeverity, ObjectResolver, ResolvedObject, SubmitBacktraceGuard,
+    ValidationDiagnostic, ValidationHandler,
+};
+
+// Feature: debug-tools - VUID knowledge base.
+#[cfg(feature = "debug-tools")]
+pub use debug::vuid_kb::{
+    register_runtime_entry as register_vuid_knowledge, static_base as vuid_knowledge_base,
+    KnowledgeLookup as VuidKnowledge, RuntimeEntry as VuidRuntimeEntry,
+};
+
+// Feature: debug-tools - VL pipeline public surface.
+#[cfg(feature = "debug-tools")]
+pub use debug::vl_pipeline::{
+    BacktracePolicy, CallbackSink, CapturedDiagnostics, DedupPolicy, ExpectCount, ExpectRule,
+    FileSink, PipelineConfig, RingSink, ScopeConfig, ScopeGuard, SeverityKey, StderrSink,
+    TagGuard, VlAction, VlConfigBuilder, VlPipeline, VlSelector, VlSink,
+};
+
+// Feature: debug-tools - allocation profiler and memory visualizer.
+#[cfg(feature = "debug-tools")]
+pub use debug::alloc_profiler::{AllocationProfiler, CallSite, LiveAllocation, SiteStats};
+#[cfg(feature = "debug-tools")]
+pub use debug::memory_viz::{MemoryVisualizer, VisualizerConfig as MemoryVizConfig};
+
+// Feature: debug-tools - device fault diagnostics.
+#[cfg(feature = "debug-tools")]
+pub use debug::device_fault::{
+    AmdMarkerBuffer, CheckpointEntry, DeviceFaultAddressInfo, DeviceFaultData, DeviceFaultInfo,
+    DeviceFaultRecorder, DeviceFaultVendorInfo, MarkerEntry,
+};
+
+// Feature: debug-tools - VL baseline capture/diff.
+#[cfg(feature = "debug-tools")]
+pub use debug::vl_baseline::{
+    snapshot as vl_baseline_snapshot, BaselineEntry, FreqChange, VlBaseline, VlDiffReport,
+    BASELINE_FORMAT_VERSION,
+};
+
+// Feature: debug-tools - GPU determinism verifier.
+#[cfg(feature = "debug-tools")]
+pub use debug::determinism::{
+    xxh64, BufferHash, CaptureSet, DeterminismChecker, ImageHash, RunResult,
+};
+
+// Feature: debug-tools - cross-queue tracker and DAG visualizer.
+#[cfg(feature = "debug-tools")]
+pub use debug::cross_queue::{
+    CrossQueueEdge, CrossQueueReport, CrossQueueTracker, OrphanSignal, OrphanWait,
+    TrackedSubmission,
+};
+#[cfg(feature = "debug-tools")]
+pub use debug::sync_dag_viz::{SyncDagVisualizer, SyncDagVizConfig};
+
+// Feature: debug-tools - shader watcher.
+#[cfg(feature = "debug-tools")]
+pub use shader_watcher::{bytes_to_spirv, ShaderWatcher};
 
 /// The type of GPU queue being requested.
 ///
@@ -337,6 +405,8 @@ unsafe impl Send for Ignis {}
 unsafe impl Sync for Ignis {}
 
 impl Ignis {
+    // Construction.
+
     /// Create an ignis context that manages its own Vulkan instance and device.
     ///
     /// This is the standalone mode. Ignis will:
@@ -423,128 +493,7 @@ impl Ignis {
             .collect()
     }
 
-    /// Find a queue matching the requested type.
-    ///
-    /// For [`QueueType::Compute`] and [`QueueType::Transfer`], prefers
-    /// dedicated queue families (without graphics capability) when available,
-    /// falling back to shared families.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NoSuitableQueueFamily`] if no queue with the required
-    /// capability exists.
-    pub fn queue(&self, queue_type: QueueType) -> Result<&Arc<AsyncQueue>> {
-        let required = queue_type.required_flags();
-
-        // Prefer a dedicated queue (one that has the required flag but NOT graphics,
-        // unless graphics is what we want).
-        let dedicated = self.queues.iter().find(|q| {
-            let caps = q.capabilities();
-            caps.contains(required)
-                && (queue_type == QueueType::Graphics || !caps.contains(vk::QueueFlags::GRAPHICS))
-        });
-
-        dedicated
-            .or_else(|| {
-                self.queues
-                    .iter()
-                    .find(|q| q.capabilities().contains(required))
-            })
-            .ok_or(Error::NoSuitableQueueFamily(queue_type))
-    }
-
-    /// Returns all available queues.
-    pub fn all_queues(&self) -> &[Arc<AsyncQueue>] {
-        &self.queues
-    }
-
-    /// Create a per-frame synchronization manager.
-    ///
-    /// Allocates `frames_in_flight` fences (initially signaled) and pairs
-    /// of semaphores for image acquisition and render completion.
-    ///
-    /// # Errors
-    ///
-    /// Returns a Vulkan error if fence or semaphore creation fails.
-    pub fn create_frame_sync(&self, frames_in_flight: u32) -> Result<FrameSync> {
-        FrameSync::new(Arc::clone(&self.shared), frames_in_flight)
-    }
-
-    /// Create a command pool for the given queue type.
-    ///
-    /// The pool is created with `RESET_COMMAND_BUFFER` flag, allowing
-    /// individual command buffer resets.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NoSuitableQueueFamily`] if no matching family exists,
-    /// or a Vulkan error if pool creation fails.
-    pub fn create_command_pool(&self, queue_type: QueueType) -> Result<CommandPool> {
-        let queue = self.queue(queue_type)?;
-        CommandPool::new(Arc::clone(&self.shared), queue.family_index())
-    }
-
-    /// Create a parallel command recorder with one command pool per thread.
-    ///
-    /// Each of the `thread_count` pools belongs to the same queue family.
-    /// Use [`ParallelRecorder::record`] to record secondary command buffers
-    /// in parallel via `std::thread::scope`.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::NoSuitableQueueFamily`] if no matching family exists,
-    /// or a Vulkan error if pool creation fails.
-    pub fn create_parallel_recorder(
-        &self,
-        queue_type: QueueType,
-        thread_count: u32,
-    ) -> Result<ParallelRecorder> {
-        let queue = self.queue(queue_type)?;
-        ParallelRecorder::new(Arc::clone(&self.shared), queue.family_index(), thread_count)
-    }
-
-    /// Begin building a graphics pipeline.
-    pub fn graphics_pipeline_builder(&self) -> GraphicsPipelineBuilder {
-        GraphicsPipelineBuilder::new(Arc::clone(&self.shared))
-    }
-
-    /// Begin building a compute pipeline.
-    pub fn compute_pipeline_builder(&self) -> ComputePipelineBuilder {
-        ComputePipelineBuilder::new(Arc::clone(&self.shared))
-    }
-
-    /// Begin building a ray tracing pipeline.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::FeatureNotEnabled`] if the device was not created
-    /// with ray tracing extensions.
-    pub fn raytracing_pipeline_builder(&self) -> Result<RayTracingPipelineBuilder> {
-        if self.shared.rt_pipeline_fn.is_none() {
-            return Err(Error::FeatureNotEnabled("VK_KHR_ray_tracing_pipeline"));
-        }
-        Ok(RayTracingPipelineBuilder::new(Arc::clone(&self.shared)))
-    }
-
-    /// Begin building a render pass.
-    pub fn render_pass_builder(&self) -> RenderPassBuilder {
-        RenderPassBuilder::new(Arc::clone(&self.shared))
-    }
-
-    /// Create a shader module from SPIR-V bytecode.
-    ///
-    /// # Arguments
-    ///
-    /// * `spirv` - SPIR-V data as a slice of `u32` words. Must begin with the
-    ///   SPIR-V magic number (`0x07230203`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InvalidSpirv`] if the data is empty or has wrong magic,
-    /// or a Vulkan error if module creation fails.
-    pub fn create_shader_module(&self, spirv: &[u32]) -> Result<ShaderModule> {
-        ShaderModule::new(Arc::clone(&self.shared), spirv)
-    }
+    // Device introspection.
 
     /// Access the underlying ash logical device.
     #[inline]
@@ -613,6 +562,203 @@ impl Ignis {
     #[inline]
     pub fn acceleration_structure_fn(&self) -> Option<&ash::khr::acceleration_structure::Device> {
         self.shared.accel_struct_fn.as_ref()
+    }
+
+    // Queue access.
+
+    /// Find a queue matching the requested type.
+    ///
+    /// For [`QueueType::Compute`] and [`QueueType::Transfer`], prefers
+    /// dedicated queue families (without graphics capability) when available,
+    /// falling back to shared families.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSuitableQueueFamily`] if no queue with the required
+    /// capability exists.
+    pub fn queue(&self, queue_type: QueueType) -> Result<&Arc<AsyncQueue>> {
+        let required = queue_type.required_flags();
+
+        // Prefer a dedicated queue (one that has the required flag but NOT graphics,
+        // unless graphics is what we want).
+        let dedicated = self.queues.iter().find(|q| {
+            let caps = q.capabilities();
+            caps.contains(required)
+                && (queue_type == QueueType::Graphics || !caps.contains(vk::QueueFlags::GRAPHICS))
+        });
+
+        dedicated
+            .or_else(|| {
+                self.queues
+                    .iter()
+                    .find(|q| q.capabilities().contains(required))
+            })
+            .ok_or(Error::NoSuitableQueueFamily(queue_type))
+    }
+
+    /// Returns all available queues.
+    pub fn all_queues(&self) -> &[Arc<AsyncQueue>] {
+        &self.queues
+    }
+
+    // Synchronization primitives.
+
+    /// Create a per-frame synchronization manager.
+    ///
+    /// Allocates `frames_in_flight` fences (initially signaled) and pairs
+    /// of semaphores for image acquisition and render completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns a Vulkan error if fence or semaphore creation fails.
+    pub fn create_frame_sync(&self, frames_in_flight: u32) -> Result<FrameSync> {
+        FrameSync::new(Arc::clone(&self.shared), frames_in_flight)
+    }
+
+    /// Create a reusable fence pool.
+    pub fn create_fence_pool(&self) -> FencePool {
+        FencePool::new(Arc::clone(&self.shared))
+    }
+
+    /// Create a background fence watcher for async polling (Vulkan 1.1 fallback).
+    ///
+    /// Spawns a dedicated thread that periodically checks fence status and
+    /// wakes async tasks. The `poll_interval` controls check frequency.
+    ///
+    /// For Vulkan 1.2+ devices, prefer [`create_timeline_watcher`](Self::create_timeline_watcher)
+    /// which uses `vkWaitSemaphores` for O(1) kernel-side blocking instead
+    /// of O(N) fence polling.
+    ///
+    /// A reasonable default is `Duration::from_micros(200)`.
+    pub fn create_fence_watcher(&self, poll_interval: Duration) -> Arc<FenceWatcher> {
+        Arc::new(FenceWatcher::new(Arc::clone(&self.shared), poll_interval))
+    }
+
+    /// Create a timeline watcher for efficient async completion (Vulkan 1.2+).
+    ///
+    /// Uses `vkWaitSemaphores(ANY)` which blocks in the kernel at O(1) cost
+    /// regardless of pending future count. One watcher services all queues.
+    ///
+    /// Wake processing is O(queues + `completed_futures`) per wake-up, compared
+    /// to `O(total_pending)` for the fence watcher.
+    ///
+    /// Falls back gracefully if timelines are not available (check
+    /// [`supports_timelines`](Self::supports_timelines) first).
+    pub fn create_timeline_watcher(&self) -> Arc<TimelineWatcher> {
+        Arc::new(TimelineWatcher::new(Arc::clone(&self.shared)))
+    }
+
+    // Command recording.
+
+    /// Create a command pool for the given queue type.
+    ///
+    /// The pool is created with `RESET_COMMAND_BUFFER` flag, allowing
+    /// individual command buffer resets.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSuitableQueueFamily`] if no matching family exists,
+    /// or a Vulkan error if pool creation fails.
+    pub fn create_command_pool(&self, queue_type: QueueType) -> Result<CommandPool> {
+        let queue = self.queue(queue_type)?;
+        CommandPool::new(Arc::clone(&self.shared), queue.family_index())
+    }
+
+    /// Create a parallel command recorder with one command pool per thread.
+    ///
+    /// Each of the `thread_count` pools belongs to the same queue family.
+    /// Use [`ParallelRecorder::record`] to record secondary command buffers
+    /// in parallel via `std::thread::scope`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSuitableQueueFamily`] if no matching family exists,
+    /// or a Vulkan error if pool creation fails.
+    pub fn create_parallel_recorder(
+        &self,
+        queue_type: QueueType,
+        thread_count: u32,
+    ) -> Result<ParallelRecorder> {
+        let queue = self.queue(queue_type)?;
+        ParallelRecorder::new(Arc::clone(&self.shared), queue.family_index(), thread_count)
+    }
+
+    // Pipeline builders.
+
+    /// Begin building a graphics pipeline.
+    pub fn graphics_pipeline_builder(&self) -> GraphicsPipelineBuilder {
+        GraphicsPipelineBuilder::new(Arc::clone(&self.shared))
+    }
+
+    /// Begin building a compute pipeline.
+    pub fn compute_pipeline_builder(&self) -> ComputePipelineBuilder {
+        ComputePipelineBuilder::new(Arc::clone(&self.shared))
+    }
+
+    /// Begin building a ray tracing pipeline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::FeatureNotEnabled`] if the device was not created
+    /// with ray tracing extensions.
+    pub fn raytracing_pipeline_builder(&self) -> Result<RayTracingPipelineBuilder> {
+        if self.shared.rt_pipeline_fn.is_none() {
+            return Err(Error::FeatureNotEnabled("VK_KHR_ray_tracing_pipeline"));
+        }
+        Ok(RayTracingPipelineBuilder::new(Arc::clone(&self.shared)))
+    }
+
+    /// Begin building a render pass.
+    pub fn render_pass_builder(&self) -> RenderPassBuilder {
+        RenderPassBuilder::new(Arc::clone(&self.shared))
+    }
+
+    /// Begin building a pipeline layout.
+    pub fn pipeline_layout_builder(&self) -> PipelineLayoutBuilder {
+        PipelineLayoutBuilder::new(Arc::clone(&self.shared))
+    }
+
+    /// Create an empty pipeline cache.
+    pub fn create_pipeline_cache(&self) -> Result<PipelineCache> {
+        PipelineCache::new(Arc::clone(&self.shared))
+    }
+
+    /// Create a pipeline cache from a file (falls back to empty if invalid).
+    pub fn create_pipeline_cache_from_file(
+        &self,
+        path: impl AsRef<std::path::Path>,
+    ) -> Result<PipelineCache> {
+        PipelineCache::from_file(Arc::clone(&self.shared), path)
+    }
+
+    // Shaders.
+
+    /// Create a shader module from SPIR-V bytecode.
+    ///
+    /// # Arguments
+    ///
+    /// * `spirv` - SPIR-V data as a slice of `u32` words. Must begin with the
+    ///   SPIR-V magic number (`0x07230203`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidSpirv`] if the data is empty or has wrong magic,
+    /// or a Vulkan error if module creation fails.
+    pub fn create_shader_module(&self, spirv: &[u32]) -> Result<ShaderModule> {
+        ShaderModule::new(Arc::clone(&self.shared), spirv)
+    }
+
+    /// Create a shader module and reflect it in one step.
+    ///
+    /// Equivalent to calling [`create_shader_module`](Self::create_shader_module)
+    /// followed by [`shader_reflection::reflect`].
+    pub fn create_shader_module_with_reflection(
+        &self,
+        spirv: &[u32],
+    ) -> Result<(ShaderModule, ShaderReflection)> {
+        let module = self.create_shader_module(spirv)?;
+        let reflection = shader_reflection::reflect(spirv)?;
+        Ok((module, reflection))
     }
 
     // Allocator factory methods.
@@ -704,7 +850,66 @@ impl Ignis {
         ))
     }
 
-    // Buffer and Image creation.
+    /// Wrap any allocator with allocation site profiling.
+    ///
+    /// Returns `Arc<AllocationProfiler>`. To use the returned handle as a
+    /// regular allocator, clone it into a properly typed binding so the
+    /// unsized coercion to `Arc<dyn Allocator>` kicks in:
+    ///
+    /// ```rust,ignore
+    /// let profiler = ignis.create_alloc_profiler(inner);
+    /// let alloc: Arc<dyn Allocator> = profiler.clone();
+    /// let buf = ignis.create_buffer_with(&alloc, &info)?;
+    /// // Reports remain accessible via the AllocationProfiler handle:
+    /// eprintln!("{}", profiler.report_top_sites(10));
+    /// ```
+    #[cfg(feature = "debug-tools")]
+    pub fn create_alloc_profiler(&self, inner: Arc<dyn Allocator>) -> Arc<AllocationProfiler> {
+        AllocationProfiler::new(inner)
+    }
+
+    /// Convenience: create a fresh block allocator already wrapped with
+    /// allocation profiling. Equivalent to
+    /// `create_alloc_profiler(create_block_allocator())`.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_profiled_block_allocator(&self) -> Arc<AllocationProfiler> {
+        AllocationProfiler::new(self.create_block_allocator())
+    }
+
+    /// Create a production-grade hardened slab allocator.
+    ///
+    /// Structural hardening with near-zero overhead: size-class slabs,
+    /// bitmap-based double-free detection, randomized slot placement,
+    /// right-alignment for overflow detection, quarantine for UAF mitigation.
+    ///
+    /// Suitable for shipping builds. For debug builds with full guard bands
+    /// and canary verification, use [`create_hardened_allocator`](Self::create_hardened_allocator).
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use ignis::*; use ash::vk;
+    /// # fn example(ignis: &Ignis) -> Result<()> {
+    /// // Production: structural hardening, near-zero overhead.
+    /// let alloc = ignis.create_slab_allocator();
+    ///
+    /// // Debug: full diagnostics with slot history.
+    /// let alloc_dbg = ignis.create_slab_allocator_with(SlabConfig::debug());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "slab-allocator")]
+    pub fn create_slab_allocator(&self) -> Arc<dyn Allocator> {
+        Arc::new(SlabAllocator::new(Arc::clone(&self.shared)))
+    }
+
+    /// Create a slab allocator with custom configuration.
+    #[cfg(feature = "slab-allocator")]
+    pub fn create_slab_allocator_with(&self, config: SlabConfig) -> Arc<dyn Allocator> {
+        Arc::new(SlabAllocator::with_config(Arc::clone(&self.shared), config))
+    }
+
+    // Buffer and image creation.
 
     /// Create a buffer with the default shared block allocator.
     ///
@@ -772,66 +977,67 @@ impl Ignis {
         Image::new(Arc::clone(&self.shared), Arc::clone(allocator), info)
     }
 
-    // Swapchain.
-
-    /// Create a swapchain for the given surface.
-    ///
-    /// The surface must have been created externally (via winit, SDL, etc.)
-    /// for the same Vulkan instance. Required extensions:
-    /// `VK_KHR_surface` (instance) and `VK_KHR_swapchain` (device).
-    ///
-    /// # Surface Ownership
-    ///
-    /// The caller retains ownership of the surface and must destroy it
-    /// after the swapchain is dropped.
-    #[cfg(feature = "swapchain")]
-    pub fn create_swapchain(
+    /// Create a typed buffer with the default allocator.
+    pub fn create_typed_buffer<T: Copy + Send>(
         &self,
-        surface: vk::SurfaceKHR,
-        config: &SwapchainConfig,
-        width: u32,
-        height: u32,
-    ) -> Result<Swapchain> {
-        Swapchain::new(Arc::clone(&self.shared), surface, config, width, height)
+        element_count: usize,
+        usage: vk::BufferUsageFlags,
+        location: MemoryLocation,
+    ) -> Result<TypedBuffer<T>> {
+        let allocator = self.default_allocator();
+        TypedBuffer::new(
+            Arc::clone(&self.shared),
+            Arc::clone(allocator),
+            element_count,
+            usage,
+            location,
+        )
     }
 
-    /// Query swapchain support for a surface.
-    #[cfg(feature = "swapchain")]
-    pub fn query_swapchain_support(&self, surface: vk::SurfaceKHR) -> Result<SwapchainSupport> {
-        Swapchain::query_support(&self.shared, surface)
+    /// Create a staging ring buffer for CPU to GPU uploads.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame_capacity` - Bytes per frame's staging buffer
+    /// * `frames_in_flight` - Number of frame slots
+    pub fn create_staging_ring(
+        &self,
+        frame_capacity: vk::DeviceSize,
+        frames_in_flight: u32,
+    ) -> Result<StagingRing> {
+        let allocator = self.create_block_allocator();
+        StagingRing::new(
+            Arc::clone(&self.shared),
+            allocator,
+            frame_capacity,
+            frames_in_flight,
+        )
     }
 
-    // Synchronization and async primitives.
-
-    /// Create a background fence watcher for async polling (Vulkan 1.1 fallback).
+    /// Create a per-frame bump allocator for transient GPU data.
     ///
-    /// Spawns a dedicated thread that periodically checks fence status and
-    /// wakes async tasks. The `poll_interval` controls check frequency.
+    /// # Arguments
     ///
-    /// For Vulkan 1.2+ devices, prefer [`create_timeline_watcher`](Self::create_timeline_watcher)
-    /// which uses `vkWaitSemaphores` for O(1) kernel-side blocking instead
-    /// of O(N) fence polling.
-    ///
-    /// A reasonable default is `Duration::from_micros(200)`.
-    pub fn create_fence_watcher(&self, poll_interval: Duration) -> Arc<FenceWatcher> {
-        Arc::new(FenceWatcher::new(Arc::clone(&self.shared), poll_interval))
+    /// * `capacity` - Bytes per frame
+    /// * `frames_in_flight` - Number of frame slots
+    /// * `usage` - Buffer usage flags for the backing buffers
+    pub fn create_frame_allocator(
+        &self,
+        capacity: vk::DeviceSize,
+        frames_in_flight: u32,
+        usage: vk::BufferUsageFlags,
+    ) -> Result<FrameAllocator> {
+        let allocator = self.default_allocator();
+        FrameAllocator::new(
+            Arc::clone(&self.shared),
+            Arc::clone(allocator),
+            capacity,
+            frames_in_flight,
+            usage,
+        )
     }
 
-    /// Create a timeline watcher for efficient async completion (Vulkan 1.2+).
-    ///
-    /// Uses `vkWaitSemaphores(ANY)` which blocks in the kernel at O(1) cost
-    /// regardless of pending future count. One watcher services all queues.
-    ///
-    /// Wake processing is O(queues + `completed_futures`) per wake-up, compared
-    /// to `O(total_pending)` for the fence watcher.
-    ///
-    /// Falls back gracefully if timelines are not available (check
-    /// [`supports_timelines`](Self::supports_timelines) first).
-    pub fn create_timeline_watcher(&self) -> Arc<TimelineWatcher> {
-        Arc::new(TimelineWatcher::new(Arc::clone(&self.shared)))
-    }
-
-    // Resource tracker.
+    // Resource tracking.
 
     /// Create a new empty resource tracker.
     ///
@@ -845,7 +1051,84 @@ impl Ignis {
         ResourceTracker::new()
     }
 
-    // Deletion queue.
+    /// Create an image and validate that its usage flags cover every
+    /// declared access pattern. If any [`ImageUsageContext`] in `intents`
+    /// requires a flag not present in `info.usage`, this returns
+    /// [`Error::InvalidConfig`] with a message naming the missing flag,
+    /// before any `VkImage` is created.
+    ///
+    /// This catches a major class of runtime errors (transitions to
+    /// layouts incompatible with the image's usage flags) at creation
+    /// time, where the fix is much closer to the bug.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// # use ignis::*; use ash::vk;
+    /// # fn example(ignis: &Ignis) -> Result<()> {
+    /// let img = ignis.create_image_with_intent(
+    ///     &ImageInfo::texture_2d(
+    ///         512, 512, vk::Format::R8G8B8A8_UNORM,
+    ///         vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+    ///     ),
+    ///     &[
+    ///         ImageUsageContext::TransferDst,        // initial upload
+    ///         ImageUsageContext::FragmentShaderRead, // sampled in FS
+    ///     ],
+    /// )?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// If `intents` had included `ImageUsageContext::ColorAttachment`,
+    /// the call would have failed before reaching the driver.
+    #[cfg(feature = "tracking")]
+    pub fn create_image_with_intent(
+        &self,
+        info: &ImageInfo,
+        intents: &[ImageUsageContext],
+    ) -> Result<Image> {
+        let required = intents
+            .iter()
+            .fold(vk::ImageUsageFlags::empty(), |a, c| a | c.required_usage());
+        let missing = required & !info.usage;
+        if !missing.is_empty() {
+            return Err(Error::InvalidConfig(Box::leak(
+                format!(
+                    "image intent requires usage flags {:?} but info.usage = {:?} (missing {:?})",
+                    required, info.usage, missing
+                )
+                .into_boxed_str(),
+            )));
+        }
+        self.create_image(info)
+    }
+
+    /// Create a buffer and validate that its usage flags cover every
+    /// declared access pattern. See
+    /// [`create_image_with_intent`](Self::create_image_with_intent) for
+    /// rationale.
+    #[cfg(feature = "tracking")]
+    pub fn create_buffer_with_intent(
+        &self,
+        info: &BufferInfo,
+        intents: &[BufferUsageContext],
+    ) -> Result<Buffer> {
+        let required = intents
+            .iter()
+            .fold(vk::BufferUsageFlags::empty(), |a, c| a | c.required_usage());
+        let missing = required & !info.usage;
+        if !missing.is_empty() {
+            return Err(Error::InvalidConfig(Box::leak(
+                format!(
+                    "buffer intent requires usage flags {:?} but info.usage = {:?} (missing {:?})",
+                    required, info.usage, missing
+                )
+                .into_boxed_str(),
+            )));
+        }
+        self.create_buffer(info)
+    }
 
     /// Create a timeline-based deletion queue.
     ///
@@ -1004,6 +1287,45 @@ impl Ignis {
         )
     }
 
+    /// Create a bindless descriptor heap.
+    ///
+    /// Requires the device to be created with descriptor indexing features
+    /// enabled. ignis does not enable these automatically; callers are
+    /// expected to pass the appropriate features through `ManagedConfig`
+    /// or ensure the external device has them enabled.
+    pub fn create_bindless_heap(&self, config: BindlessConfig) -> Result<BindlessHeap> {
+        BindlessHeap::new(Arc::clone(&self.shared), config)
+    }
+
+    // Swapchain.
+
+    /// Create a swapchain for the given surface.
+    ///
+    /// The surface must have been created externally (via winit, SDL, etc.)
+    /// for the same Vulkan instance. Required extensions:
+    /// `VK_KHR_surface` (instance) and `VK_KHR_swapchain` (device).
+    ///
+    /// # Surface Ownership
+    ///
+    /// The caller retains ownership of the surface and must destroy it
+    /// after the swapchain is dropped.
+    #[cfg(feature = "swapchain")]
+    pub fn create_swapchain(
+        &self,
+        surface: vk::SurfaceKHR,
+        config: &SwapchainConfig,
+        width: u32,
+        height: u32,
+    ) -> Result<Swapchain> {
+        Swapchain::new(Arc::clone(&self.shared), surface, config, width, height)
+    }
+
+    /// Query swapchain support for a surface.
+    #[cfg(feature = "swapchain")]
+    pub fn query_swapchain_support(&self, surface: vk::SurfaceKHR) -> Result<SwapchainSupport> {
+        Swapchain::query_support(&self.shared, surface)
+    }
+
     // Interop primitives.
 
     /// Create a queue broker for safe inter-engine queue sharing.
@@ -1115,6 +1437,31 @@ impl Ignis {
         SubmissionJournal::new(capacity)
     }
 
+    /// Create a cross-queue submission tracker.
+    ///
+    /// The tracker is a passive recorder: users feed it submissions
+    /// either via [`record`](crate::CrossQueueTracker::record) at submit
+    /// time or by importing from a [`SubmissionJournal`]
+    /// via
+    /// [`import_from_journal`](crate::CrossQueueTracker::import_from_journal).
+    /// Call [`analyze`](crate::CrossQueueTracker::analyze) to detect
+    /// cycles, orphans, and cross-queue dependencies.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_cross_queue_tracker(&self) -> Arc<debug::cross_queue::CrossQueueTracker> {
+        Arc::new(debug::cross_queue::CrossQueueTracker::new())
+    }
+
+    /// Create a cross-queue tracker with a custom ring buffer capacity.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_cross_queue_tracker_with_capacity(
+        &self,
+        capacity: usize,
+    ) -> Arc<debug::cross_queue::CrossQueueTracker> {
+        Arc::new(debug::cross_queue::CrossQueueTracker::with_capacity(
+            capacity,
+        ))
+    }
+
     /// Create an object lifetime tracker.
     ///
     /// Registers Vulkan objects with `#[track_caller]` creation sites.
@@ -1137,16 +1484,6 @@ impl Ignis {
     #[cfg(feature = "debug-tools")]
     pub fn create_lifetime_tracker(&self) -> LifetimeTracker {
         LifetimeTracker::new()
-    }
-
-    /// Create a bindless descriptor heap.
-    ///
-    /// Requires the device to be created with descriptor indexing features
-    /// enabled. ignis does not enable these automatically; callers are
-    /// expected to pass the appropriate features through `ManagedConfig`
-    /// or ensure the external device has them enabled.
-    pub fn create_bindless_heap(&self, config: BindlessConfig) -> Result<BindlessHeap> {
-        BindlessHeap::new(Arc::clone(&self.shared), config)
     }
 
     /// Create a crash reporter that will bundle journal, breadcrumbs,
@@ -1180,120 +1517,99 @@ impl Ignis {
         debug::shader_printf::PRINTF_REGISTRY.set(Box::new(handler));
     }
 
-    /// Create a production-grade hardened slab allocator.
+    /// Construct a device fault recorder bound to this context.
     ///
-    /// Structural hardening with near-zero overhead: size-class slabs,
-    /// bitmap-based double-free detection, randomized slot placement,
-    /// right-alignment for overflow detection, quarantine for UAF mitigation.
-    ///
-    /// Suitable for shipping builds. For debug builds with full guard bands
-    /// and canary verification, use [`create_hardened_allocator`](Self::create_hardened_allocator).
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # use ignis::*; use ash::vk;
-    /// # fn example(ignis: &Ignis) -> Result<()> {
-    /// // Production: structural hardening, near-zero overhead.
-    /// let alloc = ignis.create_slab_allocator();
-    ///
-    /// // Debug: full diagnostics with slot history.
-    /// let alloc_dbg = ignis.create_slab_allocator_with(SlabConfig::debug());
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "slab-allocator")]
-    pub fn create_slab_allocator(&self) -> Arc<dyn Allocator> {
-        Arc::new(SlabAllocator::new(Arc::clone(&self.shared)))
+    /// The recorder probes for `VK_EXT_device_fault`,
+    /// `VK_NV_device_diagnostic_checkpoints`, and `VK_AMD_buffer_marker`
+    /// at construction time. Extensions absent from the device produce
+    /// no-op behavior. Enable any of them at device creation via
+    /// [`ManagedConfig::enable_device_fault`].
+    #[cfg(feature = "debug-tools")]
+    pub fn create_device_fault_recorder(&self) -> Arc<DeviceFaultRecorder> {
+        Arc::new(DeviceFaultRecorder::new(Arc::clone(&self.shared)))
     }
 
-    /// Create a slab allocator with custom configuration.
-    #[cfg(feature = "slab-allocator")]
-    pub fn create_slab_allocator_with(&self, config: SlabConfig) -> Arc<dyn Allocator> {
-        Arc::new(SlabAllocator::with_config(Arc::clone(&self.shared), config))
+    /// Dump every VUID seen so far during this process to a baseline
+    /// file. Suitable for committing to a repo as a CI checkpoint.
+    ///
+    /// The file is written atomically via temp-rename so a crash in the
+    /// middle of writing cannot corrupt the existing baseline.
+    ///
+    /// # Errors
+    ///
+    /// Returns I/O errors from the underlying file write wrapped as
+    /// [`Error::InvalidConfig`] for consistency with the rest of the
+    /// crate.
+    #[cfg(feature = "debug-tools")]
+    pub fn dump_vl_baseline(&self, path: impl AsRef<std::path::Path>) -> Result<()> {
+        let snapshot = debug::vl_baseline::snapshot();
+        snapshot
+            .save(path.as_ref())
+            .map_err(|_| Error::InvalidConfig("failed to write VL baseline file"))
     }
 
-    /// Begin building a pipeline layout.
-    pub fn pipeline_layout_builder(&self) -> PipelineLayoutBuilder {
-        PipelineLayoutBuilder::new(Arc::clone(&self.shared))
-    }
-
-    /// Create an empty pipeline cache.
-    pub fn create_pipeline_cache(&self) -> Result<PipelineCache> {
-        PipelineCache::new(Arc::clone(&self.shared))
-    }
-
-    /// Create a pipeline cache from a file (falls back to empty if invalid).
-    pub fn create_pipeline_cache_from_file(
+    /// Compare the current run's VUIDs against a baseline file on disk.
+    ///
+    /// Loads the baseline from `path` and produces a [`VlDiffReport`]
+    /// describing new VUIDs, removed VUIDs, and frequency changes.
+    /// Use [`VlDiffReport::has_regressions`] in CI to decide whether to
+    /// fail the build.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidConfig`] if the file cannot be read or
+    /// parsed.
+    #[cfg(feature = "debug-tools")]
+    pub fn diff_vl_baseline(
         &self,
         path: impl AsRef<std::path::Path>,
-    ) -> Result<PipelineCache> {
-        PipelineCache::from_file(Arc::clone(&self.shared), path)
+    ) -> Result<debug::vl_baseline::VlDiffReport> {
+        let baseline = debug::vl_baseline::VlBaseline::load(path.as_ref())
+            .map_err(|_| Error::InvalidConfig("failed to read VL baseline file"))?;
+        let current = debug::vl_baseline::snapshot();
+        Ok(baseline.diff(&current))
     }
 
-    /// Create a staging ring buffer for CPU→GPU uploads.
+    /// Reset the VL baseline collector. Subsequent diagnostics from the
+    /// validation layer will start from zero again. Useful when the
+    /// process runs multiple independent test phases.
+    #[cfg(feature = "debug-tools")]
+    pub fn reset_vl_baseline(&self) {
+        debug::vl_baseline::reset();
+    }
+
+    /// Construct a determinism checker bound to a queue.
     ///
-    /// # Arguments
+    /// The checker stores its own `CommandPool` for the queue's family
+    /// and is ready to record and verify runs immediately.
     ///
-    /// * `frame_capacity` - Bytes per frame's staging buffer
-    /// * `frames_in_flight` - Number of frame slots
-    pub fn create_staging_ring(
+    /// # Errors
+    ///
+    /// Returns [`Error::NoSuitableQueueFamily`] if no queue of the
+    /// requested type exists, or a Vulkan error if pool creation fails.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_determinism_checker(
         &self,
-        frame_capacity: vk::DeviceSize,
-        frames_in_flight: u32,
-    ) -> Result<StagingRing> {
-        let allocator = self.create_block_allocator();
-        StagingRing::new(
-            Arc::clone(&self.shared),
-            allocator,
-            frame_capacity,
-            frames_in_flight,
-        )
+        queue_type: QueueType,
+    ) -> Result<debug::determinism::DeterminismChecker> {
+        let queue = self.queue(queue_type)?;
+        debug::determinism::DeterminismChecker::new(Arc::clone(&self.shared), Arc::clone(queue))
     }
 
-    /// Create a per-frame bump allocator for transient GPU data.
+    /// Construct a memory layout visualizer with default styling.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_memory_visualizer(&self) -> MemoryVisualizer {
+        MemoryVisualizer::new()
+    }
+
+    /// Create a filesystem shader watcher.
     ///
-    /// # Arguments
-    ///
-    /// * `capacity` - Bytes per frame
-    /// * `frames_in_flight` - Number of frame slots
-    /// * `usage` - Buffer usage flags for the backing buffers
-    pub fn create_frame_allocator(
-        &self,
-        capacity: vk::DeviceSize,
-        frames_in_flight: u32,
-        usage: vk::BufferUsageFlags,
-    ) -> Result<FrameAllocator> {
-        let allocator = self.default_allocator();
-        FrameAllocator::new(
-            Arc::clone(&self.shared),
-            Arc::clone(allocator),
-            capacity,
-            frames_in_flight,
-            usage,
-        )
-    }
-
-    /// Create a typed buffer with the default allocator.
-    pub fn create_typed_buffer<T: Copy + Send>(
-        &self,
-        element_count: usize,
-        usage: vk::BufferUsageFlags,
-        location: MemoryLocation,
-    ) -> Result<TypedBuffer<T>> {
-        let allocator = self.default_allocator();
-        TypedBuffer::new(
-            Arc::clone(&self.shared),
-            Arc::clone(allocator),
-            element_count,
-            usage,
-            location,
-        )
-    }
-
-    /// Create a reusable fence pool.
-    pub fn create_fence_pool(&self) -> FencePool {
-        FencePool::new(Arc::clone(&self.shared))
+    /// The watcher polls registered files at the given interval and fires
+    /// callbacks when a file's mtime or size changes. Suitable for
+    /// hot-reloading SPIR-V during development.
+    #[cfg(feature = "debug-tools")]
+    pub fn create_shader_watcher(&self, poll_interval: std::time::Duration) -> Arc<ShaderWatcher> {
+        ShaderWatcher::new(poll_interval)
     }
 
     /// Create a debug utils wrapper for object naming and command labels.
@@ -1314,6 +1630,7 @@ impl Ignis {
     pub fn create_gpu_profiler(&self, max_queries: u32) -> Result<GpuProfiler> {
         GpuProfiler::new(&self.shared, max_queries)
     }
+
     /// Install a global object resolver for forensic validation diagnostics.
     ///
     /// When the validation layer mentions a Vulkan handle, the resolver
@@ -1371,14 +1688,17 @@ impl DeviceHandle for Ignis {
     fn ash_instance(&self) -> &ash::Instance {
         &self.shared.instance
     }
+
     #[inline]
     fn ash_device(&self) -> &ash::Device {
         &self.shared.device
     }
+
     #[inline]
     fn physical_device(&self) -> vk::PhysicalDevice {
         self.shared.physical_device
     }
+
     #[inline]
     fn queue_family_properties(&self) -> &[vk::QueueFamilyProperties] {
         &self.shared.queue_family_props

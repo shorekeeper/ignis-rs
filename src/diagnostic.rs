@@ -25,7 +25,7 @@
 //!  spec: Vulkan §11.6 Resource Memory Association
 //!    --> VkDeviceMemory(0xdc..dc) offset=448 size=128B
 //!     |
-//!     |  ── Environment ──────────────────────
+//!     |  ── Environment ──
 //!     |  GPU: NVIDIA GeForce RTX 4090
 //!     |  Driver: 546.33
 //!     |  Vulkan API: 1.3.270
@@ -35,7 +35,7 @@
 //!     |  Memory heaps: 3
 //!     |  Features: tracking, debug-tools, slab-allocator
 //!     |
-//!     |  ── Backtrace ────────────────────────
+//!     |  ── Backtrace 
 //!     |    0: ignis::debug::hardened::HardenedAllocator::free
 //!     |    1: ignis::memory::resources::Buffer::drop
 //!     |    2: my_app::renderer::cleanup
@@ -105,6 +105,8 @@
 //! the diagnostic header so the user can immediately look up the
 //! relevant rule.
 
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -114,9 +116,7 @@ use std::time::{Duration, Instant};
 /// Width of the diagnostic frame borders in visible characters.
 const DIAG_WIDTH: usize = 76;
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Terminal styling
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// ANSI terminal style controller.
 ///
@@ -148,6 +148,13 @@ impl Style {
         }
     }
 
+    /// Construct a style with color output disabled. Use this for text
+    /// destined for log files or markdown dumps where ANSI codes would
+    /// be noise.
+    pub fn no_color() -> Self {
+        Self { on: false }
+    }
+
     /// Apply an ANSI escape code to the given text. When color is
     /// disabled, returns the text unchanged.
     fn esc(&self, code: &str, text: &str) -> String {
@@ -158,7 +165,7 @@ impl Style {
         }
     }
 
-    // ── Bold + color ──────────────────────────────────────────────────────
+    // Bold + color
 
     /// Bold red text. Used for error severity labels, corrupted byte
     /// values, and critical violation markers.
@@ -197,7 +204,7 @@ impl Style {
         self.esc("1", t)
     }
 
-    // ── Regular color ─────────────────────────────────────────────────────
+    // Regular color ───
 
     /// Blue text. Used for pipe characters (`|`) in diagnostic frames
     /// and location arrows (`-->`).
@@ -235,7 +242,7 @@ impl Style {
         self.esc("35", t)
     }
 
-    // ── Bright / high-intensity ───────────────────────────────────────────
+    // Bright / high-intensity ───
 
     /// Bright white (high-intensity). Used for diagnostic content to
     /// make it stand out against the default terminal foreground.
@@ -272,7 +279,7 @@ impl Style {
         self.esc("96", t)
     }
 
-    // ── Decorations ───────────────────────────────────────────────────────
+    // Decorations─
 
     /// Dimmed text. Used for timestamps, metadata, separator lines,
     /// and secondary context that should not compete with the main
@@ -301,7 +308,7 @@ impl Style {
         self.esc("9", t)
     }
 
-    // ── Background colors ─────────────────────────────────────────────────
+    // Background colors 
 
     /// Red background with bold white text. Used for critical error
     /// severity badges that must be immediately visible in any
@@ -326,9 +333,7 @@ impl Style {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Severity
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Severity level for a diagnostic.
 ///
@@ -386,9 +391,7 @@ impl Severity {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Global diagnostic context
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Application start time, initialized on first diagnostic context creation.
 static APP_START: OnceLock<Instant> = OnceLock::new();
@@ -430,9 +433,11 @@ impl DiagnosticContext {
     pub fn from_shared(shared: &crate::device::SharedState) -> Self {
         let props = &shared.device_properties;
 
-        let gpu_name = unsafe { std::ffi::CStr::from_ptr(props.device_name.as_ptr()) }
-            .to_string_lossy()
-            .into_owned();
+        let gpu_name = unsafe {
+            std::ffi::CStr::from_ptr(props.device_name.as_ptr())
+        }
+        .to_string_lossy()
+        .into_owned();
 
         let api_version = format!(
             "{}.{}.{}",
@@ -441,6 +446,7 @@ impl DiagnosticContext {
             ash::vk::api_version_patch(props.api_version),
         );
 
+        #[allow(unused_mut)]
         let driver_version = format!(
             "{}.{}.{}",
             ash::vk::api_version_major(props.driver_version),
@@ -448,6 +454,7 @@ impl DiagnosticContext {
             ash::vk::api_version_patch(props.driver_version),
         );
 
+        #[allow(unused_mut)]
         let mut features = Vec::new();
         #[cfg(feature = "tracking")]
         features.push("tracking");
@@ -495,9 +502,7 @@ pub(crate) fn app_uptime() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Diagnostic session counters
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Global atomic counters for all diagnostic emissions during the process
 /// lifetime. Used to produce the session summary at shutdown.
@@ -593,7 +598,7 @@ pub(crate) fn session_summary() -> String {
     );
     write_pipe_empty(&mut o, &s);
 
-    // ── Severity totals with colored counts ──
+    // Severity totals with colored counts ──
 
     let err_display = if errors > 0 {
         format!(
@@ -624,18 +629,16 @@ pub(crate) fn session_summary() -> String {
     );
     write_pipe_empty(&mut o, &s);
 
-    // ── Utilization bar showing error/warning/info ratio ──
+    // Utilization bar showing error/warning/info ratio ──
 
     if total > 0 {
         let err_frac = errors as f64 / total as f64;
         let warn_frac = warnings as f64 / total as f64;
 
-        let bar_width: usize = 50;
+        let bar_width:usize = 50;
         let err_chars = (err_frac * bar_width as f64).round() as usize;
         let warn_chars = (warn_frac * bar_width as f64).round() as usize;
-        let info_chars = bar_width
-            .saturating_sub(err_chars)
-            .saturating_sub(warn_chars);
+        let info_chars = bar_width.saturating_sub(err_chars).saturating_sub(warn_chars);
 
         let bar = format!(
             "[{}{}{}]",
@@ -657,7 +660,7 @@ pub(crate) fn session_summary() -> String {
         write_pipe_empty(&mut o, &s);
     }
 
-    // ── Per-code breakdown ──
+    // Per-code breakdown ──
 
     let seen = c.seen_codes.lock().unwrap();
     if !seen.is_empty() {
@@ -681,7 +684,7 @@ pub(crate) fn session_summary() -> String {
         write_pipe_empty(&mut o, &s);
     }
 
-    // ── Session metadata ──
+    // Session metadata ──
 
     write_separator(&mut o, &s);
     write_kv(&mut o, &s, "Session duration", &app_uptime());
@@ -691,7 +694,7 @@ pub(crate) fn session_summary() -> String {
         write_kv(&mut o, &s, "Vulkan API", &ctx.api_version);
     }
 
-    // ── Actionable advice if errors present ──
+    // Actionable advice if errors present ──
 
     if errors > 0 {
         write_pipe_empty(&mut o, &s);
@@ -729,7 +732,7 @@ fn code_to_severity_hint(code: &str, s: &Style) -> String {
         "IGN-H006" => return s.bold_cyan("INFO "),
         "IGN-S012" => return s.bold_cyan("INFO "),
         "IGN-J002" => return s.bold_cyan("INFO "),
-        "IGN-SUM" => return s.bold_cyan("INFO "),
+        "IGN-SUM"  => return s.bold_cyan("INFO "),
         _ => {}
     }
 
@@ -744,15 +747,13 @@ fn code_to_severity_hint(code: &str, s: &Style) -> String {
         || code.starts_with("IGN-P")    // pipeline audit
         || code.starts_with("IGN-T")    // thread audit
         || code.starts_with("IGN-W")    // hang detector
-        || code.starts_with("IGN-J001")
-    // journal error dump
+        || code.starts_with("IGN-J001") // journal error dump
     {
         s.bold_red(" ERR ")
     } else if code.starts_with("IGN-M")    // budget monitor
         || code.starts_with("IGN-O")       // barrier optimizer
         || code.starts_with("IGN-L")       // lifetime leaks
-        || code.starts_with("IGN-Q")
-    // deletion queue
+        || code.starts_with("IGN-Q")       // deletion queue
     {
         s.bold_yellow("WARN ")
     } else {
@@ -760,9 +761,7 @@ fn code_to_severity_hint(code: &str, s: &Style) -> String {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Vulkan spec references
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Returns the relevant Vulkan specification section for a given
 /// diagnostic code, if known.
@@ -796,9 +795,7 @@ pub(crate) fn spec_reference(code: &str) -> Option<&'static str> {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Context helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Get a wall-clock timestamp string formatted as `HH:MM:SS.mmm`.
 ///
@@ -829,9 +826,7 @@ pub(crate) fn current_thread_name() -> String {
         .to_string()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Core write primitives
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Build a diagnostic header with top border, severity icon, code, message,
 /// and automatic context (timestamp, thread, pid, uptime).
@@ -1017,9 +1012,7 @@ pub(crate) fn write_section(o: &mut String, s: &Style, title: &str) {
     write_pipe_raw(o, s, &s.bold(&s.bright_white(&format!("── {title} ──"))));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Environment block
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Write the full GPU environment context block.
 ///
@@ -1046,9 +1039,7 @@ pub(crate) fn write_environment_block(o: &mut String, s: &Style) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Backtrace capture
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Capture the current backtrace and format it compactly, filtering out
 /// internal Rust runtime frames.
@@ -1084,7 +1075,7 @@ pub(crate) fn write_backtrace(o: &mut String, s: &Style, max_frames: usize) {
                 && !trimmed.contains("lang_start")
                 && !trimmed.contains("BaseThreadInitThunk") // NEW: Windows CRT
                 && !trimmed.contains("RtlUserThreadStart")  // NEW: Windows CRT
-                && !trimmed.contains("__scrt_common_main") // NEW: Windows CRT
+                && !trimmed.contains("__scrt_common_main")  // NEW: Windows CRT
         })
         .take(max_frames)
         .collect();
@@ -1095,18 +1086,18 @@ pub(crate) fn write_backtrace(o: &mut String, s: &Style, max_frames: usize) {
 
     write_separator(o, s);
     write_section(o, s, "Backtrace");
-
+    
     for (i, frame) in frames.iter().enumerate() {
         let trimmed = frame.trim();
         // Strip the original frame number ("5: ") to avoid double-numbering.
-        let cleaned = if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
-            // Handle multi-digit: "12: foo" -> strip digits then ": "
+        let cleaned = if trimmed
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
             let after_digits = trimmed.trim_start_matches(|c: char| c.is_ascii_digit());
-            if let Some(rest) = after_digits.strip_prefix(": ") {
-                rest
-            } else {
-                trimmed
-            }
+            after_digits.strip_prefix(": ").unwrap_or(trimmed)
         } else {
             trimmed
         };
@@ -1135,9 +1126,7 @@ pub(crate) fn write_backtrace(o: &mut String, s: &Style, max_frames: usize) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Repeat notice
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Write a notice if this diagnostic code has been emitted more than once.
 ///
@@ -1158,16 +1147,16 @@ pub(crate) fn write_repeat_notice(o: &mut String, s: &Style, code: &str, count: 
             write_pipe_raw(
                 o,
                 s,
-                &s.bold_yellow("  Consider fixing the root cause to reduce diagnostic noise"),
+                &s.bold_yellow(
+                    "  Consider fixing the root cause to reduce diagnostic noise",
+                ),
             );
         }
         write_pipe_empty(o, s);
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Critical banner
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Write an attention-grabbing banner for critical errors.
 ///
@@ -1196,9 +1185,7 @@ pub(crate) fn write_critical_banner(o: &mut String, s: &Style, msg: &str) {
     let _ = writeln!(o, " {}", s.bold_red(&line));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Annotation lines (note, help, warn)
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Write a note line in the standard format: `   = note: text`
 ///
@@ -1243,9 +1230,7 @@ fn write_labeled(o: &mut String, label: &str, text: &str, s: &Style) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Key-value pairs and tables
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Write a key-value pair on a pipe line.
 ///
@@ -1298,9 +1283,7 @@ pub(crate) fn write_table_row(o: &mut String, s: &Style, cells: &[(&str, usize)]
     write_pipe(o, s, row.trim_end());
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Numbered lists
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Write a numbered list item: `[N] content`
 ///
@@ -1312,9 +1295,7 @@ pub(crate) fn write_numbered(o: &mut String, s: &Style, index: usize, text: &str
     write_pipe_raw(o, s, &format!("{num} {}", s.bright_white(text)));
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Progress / utilization bars
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Render a progress/utilization bar with percentage and optional label.
 ///
@@ -1357,11 +1338,7 @@ pub(crate) fn render_bar(fraction: f64, width: usize, label: Option<&str>, s: &S
 
     let pct = format!("{:.1}%", fraction * 100.0);
 
-    let bar = format!(
-        "[{colored_fill}{}] {}",
-        s.dim(&empty_str),
-        s.bright_white(&pct)
-    );
+    let bar = format!("[{colored_fill}{}] {}", s.dim(&empty_str), s.bright_white(&pct));
 
     match label {
         Some(l) => format!("{bar} {}", s.bright_white(l)),
@@ -1394,9 +1371,7 @@ pub(crate) fn render_mini_bar(fraction: f64, width: usize, s: &Style) -> String 
     format!("[{cf}{}]", s.dim(&e))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Hex dumps
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Format bytes as space-separated hex pairs: `"d8 08 96 f8"`.
 ///
@@ -1502,15 +1477,17 @@ pub(crate) fn hex_dump(data: &[u8], base_offset: usize, max_rows: usize) -> Stri
     }
 
     if data.len() > rows * bytes_per_row {
-        let _ = write!(o, "\n... {} more bytes", data.len() - rows * bytes_per_row);
+        let _ = write!(
+            o,
+            "\n... {} more bytes",
+            data.len() - rows * bytes_per_row
+        );
     }
 
     o
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Corruption pattern analysis
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Analyze what kind of data overwrote a guard band or zero-prefix.
 ///
@@ -1647,9 +1624,7 @@ pub(crate) fn shannon_entropy(data: &[u8]) -> f64 {
         .sum()
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Formatting helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Format a Duration compactly: `"142.3us"`, `"3.21ms"`, `"5.02s"`.
 ///
@@ -1758,9 +1733,7 @@ pub(crate) fn pluralize(count: usize, singular: &str, plural: &str) -> String {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Vulkan type names
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Format a Vulkan object type as a readable string matching the
 /// official Vulkan type naming convention (`VkPipeline`, `VkBuffer`, etc.).
@@ -2001,9 +1974,7 @@ pub(crate) fn layout_short(layout: ash::vk::ImageLayout) -> &'static str {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Hardened allocator diagnostic formatters
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// All data needed to format a guard band corruption report.
 ///
@@ -2114,7 +2085,7 @@ pub(crate) fn format_guard_report(r: &GuardReport) -> String {
     );
     write_pipe_empty(&mut o, &s);
 
-    // ── Layout diagram ──
+    // Layout diagram ──
 
     let (diagram, fw, uw, _bw) = layout_diagram(r.guard_size, r.user_size, r.guard_size);
     write_pipe(&mut o, &s, &diagram);
@@ -2137,7 +2108,7 @@ pub(crate) fn format_guard_report(r: &GuardReport) -> String {
         ),
     );
 
-    // ── Hex comparison ──
+    // Hex comparison ──
 
     write_pipe_empty(&mut o, &s);
     write_pipe(
@@ -2164,7 +2135,7 @@ pub(crate) fn format_guard_report(r: &GuardReport) -> String {
         write_pipe_raw(&mut o, &s, &format!("{marker_pad}{}", s.bold_red(&markers)));
     }
 
-    // ── Concrete byte values ──
+    // Concrete byte values ──
 
     write_pipe_empty(&mut o, &s);
     write_pipe_raw(
@@ -2178,17 +2149,13 @@ pub(crate) fn format_guard_report(r: &GuardReport) -> String {
         ),
     );
 
-    // ── Corruption pattern analysis ──
+    // Corruption pattern analysis ──
 
     write_separator(&mut o, &s);
     write_section(&mut o, &s, "Corruption Analysis");
 
     let pattern = analyze_corruption_pattern(&r.hex_actual, &r.hex_expected);
-    write_pipe(
-        &mut o,
-        &s,
-        &format!("pattern: {}", s.bright_white(&pattern)),
-    );
+    write_pipe(&mut o, &s, &format!("pattern: {}", s.bright_white(&pattern)));
 
     let pct = (r.total_corrupted as f64 / r.guard_size as f64) * 100.0;
     write_pipe(
@@ -2213,7 +2180,7 @@ pub(crate) fn format_guard_report(r: &GuardReport) -> String {
         );
     }
 
-    // ── Metadata ──
+    // Metadata ──
 
     write_pipe_empty(&mut o, &s);
     write_note(&mut o, &s, &format!("canary={:#018x}", r.canary));
@@ -2232,7 +2199,7 @@ pub(crate) fn format_guard_report(r: &GuardReport) -> String {
     }
     write_note(&mut o, &s, &format!("detected during {}", r.source));
 
-    // ── Help suggestion ──
+    // Help suggestion ──
 
     let suggestion = corruption_suggestion(r.region, r.first_corrupted, r.guard_size as usize);
     write_help(&mut o, &s, &suggestion);
@@ -2273,12 +2240,7 @@ pub(crate) fn format_double_free(memory_handle: u64, offset: u64, size: u64) -> 
 
     write_separator(&mut o, &s);
     write_section(&mut o, &s, "Probable Causes");
-    write_numbered(
-        &mut o,
-        &s,
-        1,
-        "Double free — the same buffer/image was dropped twice",
-    );
+    write_numbered(&mut o, &s, 1, "Double free — the same buffer/image was dropped twice");
     write_numbered(
         &mut o,
         &s,
@@ -2374,9 +2336,7 @@ pub(crate) fn format_memory_leaks(entries: &[LeakEntry]) -> String {
     o
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// Build an ASCII art layout diagram showing front guard, user data,
 /// and back guard regions with proportional sizing.

@@ -20,12 +20,19 @@ use super::validation_forensic::{DiagnosticCategory, KnowledgeEntry};
 /// Key is the VUID numeric suffix. Uses `String` storage because entries
 /// may come from user code at runtime and cannot be `&'static`.
 pub struct RuntimeEntry {
+    /// Numeric VUID suffix to match (e.g., `"01213"`).
     pub vuid_suffix: String,
+    /// Short title shown in the diagnostic header.
     pub title: String,
+    /// Diagnostic category for routing and filtering.
     pub category: DiagnosticCategory,
+    /// Plain-language description of what the user did wrong.
     pub what_happened: String,
+    /// Why the Vulkan specification rejects this usage.
     pub why_rejected: String,
+    /// Suggested fix using ignis-specific API patterns.
     pub ignis_fix: String,
+    /// Vulkan specification section reference.
     pub spec_section: String,
 }
 
@@ -48,13 +55,21 @@ pub fn clear_runtime_entries() {
 
 /// Snapshot of a knowledge entry for display. Owns its strings so it
 /// can be returned across the static/runtime boundary uniformly.
+#[derive(Clone)]
 pub struct KnowledgeLookup {
+    /// Numeric VUID suffix.
     pub vuid_suffix: String,
+    /// Short title shown in the diagnostic header.
     pub title: String,
+    /// Diagnostic category.
     pub category: DiagnosticCategory,
+    /// What the user did to trigger the diagnostic.
     pub what_happened: String,
+    /// Why Vulkan rejected the usage.
     pub why_rejected: String,
+    /// Concrete fix using ignis APIs.
     pub ignis_fix: String,
+    /// Specification section reference.
     pub spec_section: String,
 }
 
@@ -1741,5 +1756,64 @@ static STATIC_BASE: &[KnowledgeEntry] = &[
              AsyncQueue::submit() automatically signals the timeline semaphore\n\
              at the claimed value; no manual wiring required.",
         spec_section: "§6.4 Semaphores",
+    },
+KnowledgeEntry {
+        vuid_suffix: "00067",
+        title: "binary semaphore signaled while still in use by swapchain",
+        category: DiagnosticCategory::QueueSubmission,
+        what_happened:
+            "vkQueueSubmit tried to signal a binary semaphore that is still\n\
+             pending completion of a previous operation. The most common\n\
+             trigger is using a frame-in-flight indexed render_finished\n\
+             semaphore as the present wait: the presentation engine has\n\
+             not yet released the semaphore from an earlier\n\
+             vkQueuePresentKHR before the application signals it again\n\
+             from a new submit.",
+        why_rejected:
+            "binary semaphores can only be signaled when they are in the\n\
+             unsignaled state. Once signaled by a submit, they remain\n\
+             signaled until consumed by a queue wait or present wait.\n\
+             The presentation engine tracks occupancy per swapchain image,\n\
+             not per frame slot, so a semaphore whose lifetime is tied to\n\
+             frames-in-flight (N) collides whenever N != swapchain image\n\
+             count (M).\n\n\
+             the layer message prints `Most recently acquired image\n\
+             indices: ...` — the brackets mark the last image the offending\n\
+             semaphore was queued into present for. When the next acquire\n\
+             returns a DIFFERENT image and you try to signal that same\n\
+             semaphore again, the previous present is still holding it.",
+        ignis_fix:
+            "use ignis's per-image semaphore API on the Swapchain, which is\n\
+             indexed by the image index returned from acquire_next_image:\n\n\
+             \x20  let (image_idx, _) = swap.acquire_next_image(\n\
+             \x20      u64::MAX, frame.image_available_semaphore(),\n\
+             \x20      vk::Fence::null(),\n\
+             \x20  )?;\n\n\
+             \x20  let signals = [swap.render_complete_semaphore(image_idx)];\n\
+             \x20  let submits = [vk::SubmitInfo::default()\n\
+             \x20      .command_buffers(&cmds)\n\
+             \x20      .wait_semaphores(&[frame.image_available_semaphore()])\n\
+             \x20      .wait_dst_stage_mask(&[stage])\n\
+             \x20      .signal_semaphores(&signals)];\n\
+             \x20  gfx.submit_raw(&submits, frame.fence())?;\n\n\
+             \x20  swap.present(\n\
+             \x20      raw_queue, image_idx,\n\
+             \x20      &[swap.render_complete_semaphore(image_idx)],\n\
+             \x20  )?;\n\n\
+             image_available stays per-frame-slot (FrameSync owns it): the\n\
+             frame fence already gates its reuse, so by the time\n\
+             begin_frame() returns we know the previous acquire using that\n\
+             semaphore has completed.\n\n\
+             FrameContext::render_finished_semaphore() is ONLY for\n\
+             intra-frame signal chains (e.g. compute -> graphics handoff\n\
+             within the same frame). It must NOT be used as the present\n\
+             wait; doing so is the defining bug behind this VUID.\n\n\
+             advanced alternative: VK_KHR_swapchain_maintenance1 allows\n\
+             attaching a VkFence to each present, enabling explicit CPU-\n\
+             side control of semaphore recycling. ignis does not expose\n\
+             this path yet; per-image semaphores above are the idiomatic\n\
+             fix for core Vulkan.",
+        spec_section:
+            "§7.4.1 Binary Semaphores / §32.6 WSI Swapchain / §5.2 Queue Submission",
     },
 ];

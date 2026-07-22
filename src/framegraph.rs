@@ -59,6 +59,7 @@
 //! # }
 //! ```
 
+#[allow(unused_imports)]
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -184,6 +185,7 @@ struct PassAccess {
 /// actual Vulkan resources.
 pub type PassExecute = Box<dyn FnOnce(&CommandRecorder<'_>, &Resolver) + Send>;
 
+#[allow(dead_code)]
 struct PassDecl {
     name: String,
     access: PassAccess,
@@ -426,6 +428,7 @@ impl Default for FrameGraph {
     }
 }
 
+#[allow(dead_code)]
 struct RealizedImage {
     handle: vk::Image,
     #[allow(dead_code)]
@@ -461,6 +464,7 @@ impl<'a> Resolver<'a> {
 }
 
 /// A compiled, executable frame graph.
+#[allow(dead_code)]
 pub struct CompiledFrameGraph {
     shared: Arc<SharedState>,
     _allocator: Arc<dyn Allocator>,

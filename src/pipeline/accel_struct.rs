@@ -989,6 +989,7 @@ impl Drop for AccelerationStructure {
 /// simplicity here we let the instance buffer leak into the accel
 /// structure's lifetime via a wrapper type. Since this is a private
 /// helper, the overhead is one pointer per TLAS.
+#[allow(dead_code)]
 fn combine_scratch_owners(scratch: Buffer, instance: Buffer) -> BuildResidue {
     BuildResidue {
         _scratch: scratch,

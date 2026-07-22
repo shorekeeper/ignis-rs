@@ -83,6 +83,12 @@ pub struct CrashReporter {
     breadcrumbs: Mutex<Vec<Arc<BreadcrumbBuffer>>>,
     #[cfg(feature = "debug-tools")]
     descriptor_auditor: Mutex<Option<Arc<Mutex<DescriptorAuditor>>>>,
+    #[cfg(feature = "debug-tools")]
+    device_fault: Mutex<Option<Arc<super::device_fault::DeviceFaultRecorder>>>,
+    #[cfg(feature = "debug-tools")]
+    fault_queue: Mutex<Option<vk::Queue>>,
+    #[cfg(feature = "debug-tools")]
+    fault_markers: Mutex<Option<Arc<super::device_fault::AmdMarkerBuffer>>>,
     handler: Mutex<Option<DeviceLostHandler>>,
     extra_sections: Mutex<Vec<(String, String)>>,
 }
@@ -97,6 +103,12 @@ impl CrashReporter {
             breadcrumbs: Mutex::new(Vec::new()),
             #[cfg(feature = "debug-tools")]
             descriptor_auditor: Mutex::new(None),
+            #[cfg(feature = "debug-tools")]
+            device_fault: Mutex::new(None),
+            #[cfg(feature = "debug-tools")]
+            fault_queue: Mutex::new(None),
+            #[cfg(feature = "debug-tools")]
+            fault_markers: Mutex::new(None),
             handler: Mutex::new(None),
             extra_sections: Mutex::new(Vec::new()),
         }
@@ -119,6 +131,32 @@ impl CrashReporter {
     #[cfg(feature = "debug-tools")]
     pub fn attach_descriptor_auditor(&self, auditor: Arc<Mutex<DescriptorAuditor>>) {
         *self.descriptor_auditor.lock().unwrap() = Some(auditor);
+    }
+
+    /// Attach a device fault recorder. On `trigger`, the reporter calls
+    /// `recorder.collect_all(...)` and embeds the result in the markdown.
+    ///
+    /// `queue` and `markers` are optional. The queue is needed to read NV
+    /// checkpoints; the markers buffer is needed to read AMD per-slot
+    /// fired status. Both can be added separately if available later.
+    #[cfg(feature = "debug-tools")]
+    pub fn attach_device_fault(
+        &self,
+        recorder: Arc<super::device_fault::DeviceFaultRecorder>,
+    ) {
+        *self.device_fault.lock().unwrap() = Some(recorder);
+    }
+
+    /// Tell the reporter which queue to query for NV checkpoints.
+    #[cfg(feature = "debug-tools")]
+    pub fn set_fault_queue(&self, queue: vk::Queue) {
+        *self.fault_queue.lock().unwrap() = Some(queue);
+    }
+
+    /// Tell the reporter which AMD marker buffer to read on fault.
+    #[cfg(feature = "debug-tools")]
+    pub fn set_fault_markers(&self, markers: Arc<super::device_fault::AmdMarkerBuffer>) {
+        *self.fault_markers.lock().unwrap() = Some(markers);
     }
 
     /// Register a custom section that will be appended to every report.
@@ -226,6 +264,19 @@ impl CrashReporter {
                     writeln!(body, "```").unwrap();
                     writeln!(body).unwrap();
                 }
+            }
+        }
+
+        // Device fault data section.
+        #[cfg(feature = "debug-tools")]
+        {
+            if let Some(rec) = self.device_fault.lock().unwrap().as_ref() {
+                let queue = self.fault_queue.lock().unwrap().clone();
+                let markers = self.fault_markers.lock().unwrap().clone();
+                let data = rec.collect_all(queue, markers.as_ref());
+                let section = rec.format_section(&data);
+                body.push_str(&section);
+                writeln!(body).unwrap();
             }
         }
 

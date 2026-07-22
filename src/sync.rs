@@ -210,8 +210,21 @@ impl FrameContext {
         self.image_available
     }
 
-    /// Semaphore signaled when rendering commands for this frame complete.
-    /// Use as a wait semaphore in your present info.
+    /// Semaphore signaled when rendering commands for this frame slot
+    /// complete. Suitable for **intra-frame** signal chains (e.g. passing
+    /// data between multiple submits of the same frame, or from a compute
+    /// queue to a graphics queue within one frame).
+    ///
+    /// **Do NOT use as the wait semaphore for `vkQueuePresentKHR`.**
+    /// The presentation engine tracks binary-semaphore occupancy per
+    /// swapchain image, not per frame slot, so reusing this semaphore
+    /// for present will eventually violate
+    /// VUID-vkQueueSubmit-pSignalSemaphores-00067 whenever the swapchain
+    /// image count differs from `frames_in_flight`.
+    ///
+    /// For present, signal and wait on
+    /// [`Swapchain::render_complete_semaphore(image_idx)`](crate::Swapchain::render_complete_semaphore)
+    /// instead, which is indexed by the swapchain image.
     #[inline]
     pub fn render_finished_semaphore(&self) -> vk::Semaphore {
         self.render_finished

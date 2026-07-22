@@ -246,6 +246,7 @@ impl FenceWatcher {
     /// Register a fence for monitoring.
     ///
     /// Called internally by `SubmitBuilder::build` when a watcher is attached.
+    #[allow(dead_code)]
     pub(crate) fn watch(&self, state: Arc<WatchedFenceState>) {
         {
             let mut entries = self.entries.lock().unwrap();

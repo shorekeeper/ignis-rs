@@ -132,6 +132,7 @@ struct FreeRegion {
 }
 
 /// A single large `VkDeviceMemory`.
+#[allow(dead_code)]
 struct Block {
     memory: vk::DeviceMemory,
     total_size: vk::DeviceSize,
@@ -145,6 +146,7 @@ struct Block {
 unsafe impl Send for Block {}
 
 /// Per-memory-type pool of blocks. Protected by its own mutex.
+#[allow(dead_code)]
 struct MemoryPool {
     memory_type_index: u32,
     is_host_visible: bool,

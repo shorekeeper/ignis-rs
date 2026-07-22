@@ -91,6 +91,16 @@ pub struct Swapchain {
     handle: vk::SwapchainKHR,
     images: Vec<vk::Image>,
     image_views: Vec<vk::ImageView>,
+    /// Per-swapchain-image semaphore signaled by the render submit and
+    /// waited on by `vkQueuePresentKHR`. Indexed by the image index
+    /// returned from [`acquire_next_image`](Self::acquire_next_image).
+    ///
+    /// Per-image (not per-frame-slot) is required by
+    /// VUID-vkQueueSubmit-pSignalSemaphores-00067: the presentation engine
+    /// tracks binary-semaphore occupancy per image, and reusing the same
+    /// semaphore across different images while a previous present is still
+    /// outstanding violates the spec.
+    render_complete_semaphores: Vec<vk::Semaphore>,
     format: vk::SurfaceFormatKHR,
     extent: vk::Extent2D,
     config: SwapchainConfig,
@@ -153,6 +163,8 @@ impl Swapchain {
         let handle = unsafe { swapchain_fn.create_swapchain(&ci, None)? };
         let images = unsafe { swapchain_fn.get_swapchain_images(handle)? };
         let image_views = Self::create_image_views(&shared.device, &images, format.format)?;
+        let render_complete_semaphores =
+        Self::create_render_semaphores(&shared.device, images.len())?;
 
         Ok(Self {
             shared,
@@ -162,6 +174,7 @@ impl Swapchain {
             handle,
             images,
             image_views,
+            render_complete_semaphores,
             format,
             extent,
             config: config.clone(),
@@ -252,8 +265,13 @@ impl Swapchain {
         self.images = unsafe { self.swapchain_fn.get_swapchain_images(new_handle)? };
         self.image_views =
             Self::create_image_views(&self.shared.device, &self.images, self.format.format)?;
-        self.extent = extent;
 
+        // Rebuild per-image semaphores; image count may have changed.
+        self.destroy_render_semaphores();
+        self.render_complete_semaphores =
+            Self::create_render_semaphores(&self.shared.device, self.images.len())?;
+
+        self.extent = extent;
         Ok(())
     }
 
@@ -313,6 +331,24 @@ impl Swapchain {
             Err(vk::Result::ERROR_SURFACE_LOST_KHR) => Err(Error::SurfaceLost),
             Err(e) => Err(Error::Vulkan(e)),
         }
+    }
+
+    /// Semaphore to signal from the render submit and wait on in the
+    /// present for `image_index`. Always index by the `image_index`
+    /// returned from [`acquire_next_image`](Self::acquire_next_image).
+    ///
+    /// Using a frame-in-flight indexed semaphore here will violate
+    /// VUID-vkQueueSubmit-pSignalSemaphores-00067 whenever the swapchain
+    /// image count differs from the frames-in-flight count.
+    #[inline]
+    pub fn render_complete_semaphore(&self, image_index: u32) -> vk::Semaphore {
+        self.render_complete_semaphores[image_index as usize]
+    }
+
+    /// All per-image render-complete semaphores in acquire-order.
+    #[inline]
+    pub fn render_complete_semaphores(&self) -> &[vk::Semaphore] {
+        &self.render_complete_semaphores
     }
 
     /// Current swapchain images.
@@ -392,6 +428,26 @@ impl Swapchain {
         }
     }
 
+    fn create_render_semaphores(
+        device: &ash::Device,
+        count: usize,
+    ) -> Result<Vec<vk::Semaphore>> {
+        let ci = vk::SemaphoreCreateInfo::default();
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
+            let sem = unsafe { device.create_semaphore(&ci, None)? };
+            out.push(sem);
+        }
+        Ok(out)
+    }
+
+    fn destroy_render_semaphores(&mut self) {
+        for &sem in &self.render_complete_semaphores {
+            unsafe { self.shared.device.destroy_semaphore(sem, None) };
+        }
+        self.render_complete_semaphores.clear();
+    }
+
     fn create_image_views(
         device: &ash::Device,
         images: &[vk::Image],
@@ -437,10 +493,10 @@ impl Drop for Swapchain {
         unsafe {
             let _ = self.shared.device.device_wait_idle();
         }
+        self.destroy_render_semaphores();
         self.destroy_image_views();
         unsafe {
             self.swapchain_fn.destroy_swapchain(self.handle, None);
-            // NOTE: surface is NOT destroyed here. The caller owns it.
         }
     }
 }

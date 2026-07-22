@@ -13,6 +13,14 @@ $commands = @(
        Usage = "lint [clippy|fmt|doc|all] [--fix]" },
     @{ Cmd = "run";    Alias = "r";  Desc = "Run an example";
        Usage = "run [example_name] [--features X] [--release]" },
+    @{ Cmd = "watch";  Alias = "w";  Desc = "Rerun a target on source change";
+       Usage = "watch [check|build|test|lint|smoke] [--features X]" },
+    @{ Cmd = "vuid";   Alias = "v";  Desc = "Offline VUID knowledge browser";
+       Usage = "vuid [suffix|list|search <term>|categories]" },
+    @{ Cmd = "mux";    Alias = "";   Desc = "Terminal multiplexer workspace";
+       Usage = "mux" },
+    @{ Cmd = "live";   Alias = "";   Desc = "GPU live link workspace";
+       Usage = "live [mapping_name]" },
     @{ Cmd = "trace";  Alias = "tr"; Desc = "Inspect failures and session history";
        Usage = "trace [last|list|errors|timeline|diff|report|N]" },
     @{ Cmd = "info";   Alias = "i";  Desc = "System, Vulkan, and project info";
@@ -23,6 +31,8 @@ $commands = @(
        Usage = "clean [all|target|traces]" },
     @{ Cmd = "prof";   Alias = "p";  Desc = "Build/test timing profiler";
        Usage = "prof [build|test] [--features X]" },
+    @{ Cmd = "stub";   Alias = "st"; Desc = "LLM-readable API digest so you can modify crate yourself without giving it probably 1M context?";
+       Usage = "stub [--out FILE] [--filter STR] [--full]" },
     @{ Cmd = "unlock"; Alias = "ul"; Desc = "Kill stuck cargo/rustc and release locks";
        Usage = "unlock" },
     @{ Cmd = "help";   Alias = "h";  Desc = "This help";

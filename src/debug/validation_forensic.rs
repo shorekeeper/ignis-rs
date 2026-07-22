@@ -112,6 +112,7 @@ pub struct KnowledgeEntry {
 }
 
 /// Fully parsed and cross-referenced validation diagnostic.
+#[derive(Clone)]
 pub struct ValidationDiagnostic {
     /// Full VUID identifier, e.g. `"VUID-VkImageMemoryBarrier-oldLayout-01213"`.
     pub vuid: String,
